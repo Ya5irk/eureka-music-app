@@ -27,9 +27,12 @@ Robotics full-time software engineer take-home assignment.
 
 ## Status
 
-This repository currently reflects the **design phase**: architecture,
-diagrams, and repo scaffolding are in place; server and client
-implementation follow in subsequent commits (see commit history).
+Design phase complete (architecture, diagrams, AI-collaboration docs).
+Server and client both have working implementations of the required
+minimum feature set, with passing test suites — see the commit history for
+how the work was decomposed. Not yet verified end-to-end against a live
+`docker compose` stack or the full 8,000-track FMA Small dataset; that
+verification, plus the bonus features in `DESIGN.md` §7, are next.
 
 ## Data
 
