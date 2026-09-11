@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+*.env.local
+
+# Dataset (never commit, per assignment instructions)
+data/fma_small/
+data/fma_metadata/
+**/fma_small/
+**/fma_metadata/
+*.mp3
+*.zip
+
+# Client local state
+client/storage/downloads/
+client/storage/*.sqlite3
+client/storage/*.sqlite3-wal
+client/storage/*.sqlite3-shm
+
+# Server local state
+server/storage/audio/
+
+# Docker
+*.pid
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+node_modules/
