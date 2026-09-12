@@ -40,9 +40,11 @@ def _format_ms(ms: int) -> str:
 
 
 def _make_track_table(model: QAbstractTableModel, accessible_name: str) -> QTableView:
-    """A real multi-column table (Title/Artist/Album/Duration) rather than
-    a single "Title — Artist" text line, shared setup for the three track
-    views (Browse/Library/Playlist).
+    """A real multi-column table (Title/Artist/Album/Year/Genres/Duration)
+    rather than a single "Title — Artist" text line, shared setup for the
+    three track views (Browse/Library/Playlist). License and tags (also
+    real dataset fields) show as a tooltip on hover instead of two more
+    columns — see _track_tooltip in ui/models.py.
     """
     view = QTableView()
     view.setModel(model)
@@ -51,10 +53,20 @@ def _make_track_table(model: QAbstractTableModel, accessible_name: str) -> QTabl
     view.setSelectionMode(QAbstractItemView.SingleSelection)
     view.setEditTriggers(QAbstractItemView.NoEditTriggers)
     view.verticalHeader().setVisible(False)
-    view.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-    view.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-    view.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-    view.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+    header = view.horizontalHeader()
+    # Title carries the most information and gets whatever space is left;
+    # Artist/Album/Genres get sensible, user-resizable starting widths
+    # instead of being forced equal to Title regardless of content;
+    # Year/Duration only ever need to fit a handful of characters.
+    header.setSectionResizeMode(0, QHeaderView.Stretch)
+    header.setSectionResizeMode(1, QHeaderView.Interactive)
+    header.setSectionResizeMode(2, QHeaderView.Interactive)
+    header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(4, QHeaderView.Interactive)
+    header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+    view.setColumnWidth(1, 140)
+    view.setColumnWidth(2, 140)
+    view.setColumnWidth(4, 150)
     return view
 
 

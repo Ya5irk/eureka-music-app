@@ -10,7 +10,7 @@ from app.workers import Worker
 # see that these enum members are plain ints at runtime (they are).
 TrackRole = int(Qt.UserRole) + 1  # type: ignore[call-overload]
 
-_COLUMNS = ("Title", "Artist", "Album", "Duration")
+_COLUMNS = ("Title", "Artist", "Album", "Year", "Genres", "Duration")
 
 
 def _format_duration(total_seconds: int) -> str:
@@ -18,11 +18,23 @@ def _format_duration(total_seconds: int) -> str:
     return f"{total_seconds // 60}:{total_seconds % 60:02d}"
 
 
+def _track_tooltip(track: RemoteTrack | LocalTrack) -> str | None:
+    lines = []
+    if track.license:
+        lines.append(f"License: {track.license}")
+    if track.tags:
+        lines.append(f"Tags: {', '.join(track.tags)}")
+    return "\n".join(lines) or None
+
+
 class _TrackTableModel(QAbstractTableModel):
-    """Shared column layout (Title/Artist/Album/Duration) for the three
-    track tables (Browse/Library/Playlist) - a real table instead of a
-    single "Title — Artist" text line per row. Each subclass only manages
-    its own row storage and fetching strategy via `_track_at_row`.
+    """Shared column layout (Title/Artist/Album/Year/Genres/Duration) for
+    the three track tables (Browse/Library/Playlist) - a real table instead
+    of a single "Title — Artist" text line per row. License and tags (also
+    real FMA metadata, per tracks.csv) surface as a row tooltip rather than
+    two more columns, to avoid the table getting cramped. Each subclass
+    only manages its own row storage and fetching strategy via
+    `_track_at_row`.
     """
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -44,6 +56,8 @@ class _TrackTableModel(QAbstractTableModel):
         track = self._track_at_row(index.row())
         if role == TrackRole:
             return track
+        if role == Qt.ToolTipRole:
+            return _track_tooltip(track)
         if role == Qt.DisplayRole:
             column = index.column()
             if column == 0:
@@ -53,6 +67,10 @@ class _TrackTableModel(QAbstractTableModel):
             if column == 2:
                 return track.album or ""
             if column == 3:
+                return str(track.release_year) if track.release_year else ""
+            if column == 4:
+                return ", ".join(track.genres)
+            if column == 5:
                 return _format_duration(track.duration_seconds)
         return None
 
