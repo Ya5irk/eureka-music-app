@@ -95,3 +95,21 @@ def test_restore_last_state_rebuilds_queue(qtbot, daos: Daos, tmp_path: Path) ->
         fresh.restore_last_state()
 
     assert blocker.args[0].id == "t1"
+    assert not fresh.is_playing(), "restoring should load paused, not auto-play"
+    # _play_index's own persist(0) must not clobber the real restored position
+    assert daos.state.load().position_ms == 5000
+
+
+def test_toggle_shuffle_off_restores_manual_order(qtbot, daos: Daos, tmp_path: Path) -> None:
+    controller = _make_controller(daos, tmp_path)
+    pid = daos.playlist.create("Mix")
+    for tid in ("t0", "t1", "t2"):
+        daos.playlist.add_track(pid, tid)
+
+    controller.set_queue(["t0", "t1", "t2"], start_index=1, playlist_id=pid)
+    current_before = daos.state.load().current_track_id
+
+    controller.toggle_shuffle()  # on: queue reorders in memory
+    controller.toggle_shuffle()  # off: should restore real manual order
+
+    assert daos.state.load().current_track_id == current_before

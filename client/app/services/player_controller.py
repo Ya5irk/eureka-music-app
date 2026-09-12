@@ -43,12 +43,16 @@ class PlayerController(QObject):
     # -- queue / transport -------------------------------------------------
 
     def set_queue(
-        self, track_ids: list[str], start_index: int = 0, playlist_id: int | None = None
+        self,
+        track_ids: list[str],
+        start_index: int = 0,
+        playlist_id: int | None = None,
+        start_playing: bool = True,
     ) -> None:
         self._queue = list(track_ids)
         self._playlist_id = playlist_id
         self.queueChanged.emit(self._queue)
-        self._play_index(start_index)
+        self._play_index(start_index, start_playing=start_playing)
 
     def play(self) -> None:
         self._player.play()
@@ -87,15 +91,23 @@ class PlayerController(QObject):
         """Reorders only the in-memory playback queue. Never calls
         PlaylistDao.set_order, so the playlist's manually-set order in
         SQLite is untouched by shuffling — see DESIGN.md section 4.2.
+        Toggling back off restores the real manual order (re-read from the
+        DAO) rather than leaving the queue stuck in its shuffled order.
         """
         self._shuffle_on = not self._shuffle_on
-        if self._shuffle_on and self._queue:
-            current = self._queue[self._index]
+        if not self._queue:
+            return self._shuffle_on
+
+        current = self._queue[self._index]
+        if self._shuffle_on:
             rest = [t for t in self._queue if t != current]
             random.shuffle(rest)
             self._queue = [current, *rest]
             self._index = 0
-            self.queueChanged.emit(self._queue)
+        elif self._playlist_id is not None:
+            self._queue = [t.id for t in self._playlist_dao.list_tracks(self._playlist_id)]
+            self._index = self._queue.index(current) if current in self._queue else 0
+        self.queueChanged.emit(self._queue)
         return self._shuffle_on
 
     # -- crash-safe resume ---------------------------------------------------
@@ -112,13 +124,20 @@ class PlayerController(QObject):
 
         self._shuffle_on = state.shuffle_on
         start_index = min(state.playlist_index, max(len(track_ids) - 1, 0))
-        self.set_queue(track_ids, start_index=start_index, playlist_id=state.playlist_id)
-        self._player.pause()  # restore paused, not auto-playing on launch
+        # Load directly into a paused state rather than play()-then-pause():
+        # avoids an audible blip on launch and, more importantly, avoids
+        # stacking play/pause/setPosition calls right on top of a fresh
+        # setMedia() - the exact sequence that triggered the GStreamer
+        # pipeline freeze described in _play_index's docstring.
+        self.set_queue(
+            track_ids, start_index=start_index, playlist_id=state.playlist_id, start_playing=False
+        )
         self._player.setPosition(state.position_ms)
+        self._persist(state.position_ms)  # _play_index above just persisted position 0
 
     # -- internals -----------------------------------------------------------
 
-    def _play_index(self, index: int) -> None:
+    def _play_index(self, index: int, start_playing: bool = True) -> None:
         if not (0 <= index < len(self._queue)):
             return
         self._index = index
@@ -130,7 +149,8 @@ class PlayerController(QObject):
         # indefinitely on some backends - always stop first.
         self._player.stop()
         self._player.setMedia(QMediaContent(QUrl.fromLocalFile(track.local_path)))
-        self._player.play()
+        if start_playing:
+            self._player.play()
         self.trackChanged.emit(track)
         self._persist(position_ms=0)
 
