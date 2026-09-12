@@ -125,19 +125,12 @@ class PlayerController(QObject):
 
         self._shuffle_on = state.shuffle_on
         start_index = min(state.playlist_index, max(len(track_ids) - 1, 0))
-        # Load directly into a paused state rather than play()-then-pause():
-        # avoids an audible blip on launch and, more importantly, avoids
-        # stacking play/pause/setPosition calls right on top of a fresh
-        # setMedia() - the exact sequence that triggered the GStreamer
-        # pipeline freeze described in _play_index's docstring.
-        #
-        # setPosition() is deferred to _on_media_status_changed rather than
-        # called here directly: calling it immediately after setMedia(), before
-        # the backend has actually finished loading the media, is a real race
-        # in Qt5's GStreamer backend - the backend silently resets position
-        # back to 0 once loading completes *after* the early seek, so the
-        # track visibly "restarts" instead of resuming. Confirmed live: this
-        # exact symptom showed up testing crash-resume on real Ubuntu.
+        # The actual seek happens in _on_position_changed once the pipeline
+        # proves it's really running - see _play_index's docstring for why
+        # that's the only reliable signal on this backend. start_playing is
+        # irrelevant here: whenever _pending_seek_ms is set, _play_index
+        # always mutes+plays regardless, so the value doesn't matter, but
+        # False documents the intent (end up paused, not auto-playing).
         self._pending_seek_ms = state.position_ms
         self.set_queue(
             track_ids, start_index=start_index, playlist_id=state.playlist_id, start_playing=False
@@ -157,18 +150,24 @@ class PlayerController(QObject):
         # prior stop()) can stall GStreamer's pipeline teardown/rebuild
         # indefinitely on some backends - always stop first.
         self._player.stop()
-        self._player.setMedia(QMediaContent(QUrl.fromLocalFile(track.local_path)))
-        if start_playing:
+        if self._pending_seek_ms is not None:
+            # Confirmed live, empirically, on real Ubuntu: this backend
+            # never reports a valid duration() for these files, and
+            # pause() alone (without ever calling play()) never advances
+            # position at all - the pipeline simply never starts. play()
+            # is the only thing that actually gets it running, so we mute
+            # first and let _on_position_changed apply the real seek and
+            # pause once the first genuine position tick proves the
+            # pipeline is live - never any audible sound in between.
+            self._player.setMuted(True)
+            self._player.setMedia(QMediaContent(QUrl.fromLocalFile(track.local_path)))
             self._player.play()
         else:
-            # Not play()-then-pause() (see docstring above for why that's
-            # unsafe), but not doing nothing either: without an explicit
-            # state transition the backend never actually prerolls the
-            # media, so it has no valid position to seek to yet and a
-            # pending restore seek silently has nothing to land on.
-            # pause() alone triggers preroll without ever reaching
-            # PlayingState, so nothing is audible.
-            self._player.pause()
+            self._player.setMedia(QMediaContent(QUrl.fromLocalFile(track.local_path)))
+            if start_playing:
+                self._player.play()
+            else:
+                self._player.pause()
         self.trackChanged.emit(track)
         self._persist(position_ms=0)
 
@@ -178,19 +177,24 @@ class PlayerController(QObject):
         return self._library.get(self._queue[self._index])
 
     def _on_position_changed(self, position_ms: int) -> None:
+        if self._pending_seek_ms is not None:
+            # The first tick at all proves the muted play() in _play_index
+            # actually got the pipeline running - safe to seek now, then
+            # settle into the paused state restore_last_state wants,
+            # without this transient tick being mistaken for real playback.
+            target = self._pending_seek_ms
+            self._pending_seek_ms = None
+            self._player.setPosition(target)
+            self._player.pause()
+            self._player.setMuted(False)
+            return
+
         self.positionChanged.emit(position_ms)
         self._tick_count += 1
         if self._tick_count % _POSITION_SAVE_EVERY_N_TICKS == 0:
             self._persist(position_ms)
 
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
-        if (
-            self._pending_seek_ms is not None
-            and status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia)
-        ):
-            self._player.setPosition(self._pending_seek_ms)
-            self._pending_seek_ms = None
-
         if status != QMediaPlayer.EndOfMedia:
             return
         if self._loop_mode == LoopMode.TRACK:
