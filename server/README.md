@@ -27,9 +27,13 @@ Data persists across restarts in named volumes (`pgdata`, `audio_storage`);
 ## Seed the catalog from FMA Small
 
 ```bash
-docker compose exec api python scripts/seed.py /data/fma --limit 100   # subset while developing
-docker compose exec api python scripts/seed.py /data/fma                # full 8,000-track run
+docker compose exec api python -m scripts.seed /data/fma --limit 100   # subset while developing
+docker compose exec api python -m scripts.seed /data/fma                # full 8,000-track run
 ```
+
+(Must be run as a module — `python scripts/seed.py` directly fails with
+`ModuleNotFoundError: No module named 'app'`, since the script's own
+directory, not `/app`, ends up first on `sys.path` that way.)
 
 `/data/fma` above assumes you've mounted your unzipped FMA folder into the
 `api` container — add a volume for it in `docker-compose.yml`, e.g.:
