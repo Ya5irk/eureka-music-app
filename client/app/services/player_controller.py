@@ -160,6 +160,15 @@ class PlayerController(QObject):
         self._player.setMedia(QMediaContent(QUrl.fromLocalFile(track.local_path)))
         if start_playing:
             self._player.play()
+        else:
+            # Not play()-then-pause() (see docstring above for why that's
+            # unsafe), but not doing nothing either: without an explicit
+            # state transition the backend never actually prerolls the
+            # media, so it has no valid position to seek to yet and a
+            # pending restore seek silently has nothing to land on.
+            # pause() alone triggers preroll without ever reaching
+            # PlayingState, so nothing is audible.
+            self._player.pause()
         self.trackChanged.emit(track)
         self._persist(position_ms=0)
 
