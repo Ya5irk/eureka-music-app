@@ -27,6 +27,8 @@ class PlayerController(QObject):
         self._state_dao = state_dao
 
         self._player = QMediaPlayer()
+        self._player.setVolume(100)
+        self._player.setMuted(False)
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._player.durationChanged.connect(self.durationChanged.emit)
@@ -123,6 +125,10 @@ class PlayerController(QObject):
         track = self._library.get(self._queue[index])
         if track is None:
             return
+        # Loading new media into a player that's still actively playing (no
+        # prior stop()) can stall GStreamer's pipeline teardown/rebuild
+        # indefinitely on some backends - always stop first.
+        self._player.stop()
         self._player.setMedia(QMediaContent(QUrl.fromLocalFile(track.local_path)))
         self._player.play()
         self.trackChanged.emit(track)
