@@ -1,21 +1,23 @@
 from pathlib import Path
 
-from PySide2.QtCore import Qt
+from PySide2.QtCore import QAbstractTableModel, Qt
 from PySide2.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListView,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSlider,
-    QSplitter,
     QStatusBar,
+    QStyle,
+    QTableView,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -35,6 +37,25 @@ from app.ui.upload_dialog import UploadDialog
 def _format_ms(ms: int) -> str:
     total_seconds = max(ms, 0) // 1000
     return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
+
+def _make_track_table(model: QAbstractTableModel, accessible_name: str) -> QTableView:
+    """A real multi-column table (Title/Artist/Album/Duration) rather than
+    a single "Title — Artist" text line, shared setup for the three track
+    views (Browse/Library/Playlist).
+    """
+    view = QTableView()
+    view.setModel(model)
+    view.setAccessibleName(accessible_name)
+    view.setSelectionBehavior(QAbstractItemView.SelectRows)
+    view.setSelectionMode(QAbstractItemView.SingleSelection)
+    view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    view.verticalHeader().setVisible(False)
+    view.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+    view.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+    view.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+    view.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+    return view
 
 
 class MainWindow(QMainWindow):
@@ -72,16 +93,11 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._build_browse_tab(), "Browse")
         tabs.addTab(self._build_library_tab(), "Library")
-
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(tabs)
-        splitter.addWidget(self._build_playlist_panel())
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
+        tabs.addTab(self._build_playlist_tab(), "Playlists")
 
         central = QWidget()
         layout = QVBoxLayout(central)
-        layout.addWidget(splitter, stretch=1)
+        layout.addWidget(tabs, stretch=1)
         layout.addWidget(self._build_player_bar(), stretch=0)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
@@ -106,9 +122,7 @@ class MainWindow(QMainWindow):
         search_row.addWidget(search_button)
         layout.addLayout(search_row)
 
-        self._remote_view = QListView()
-        self._remote_view.setModel(self._remote_model)
-        self._remote_view.setAccessibleName("Catalog search results")
+        self._remote_view = _make_track_table(self._remote_model, "Catalog search results")
         layout.addWidget(self._remote_view)
 
         self._download_progress = QProgressBar()
@@ -137,20 +151,18 @@ class MainWindow(QMainWindow):
         caption.setObjectName("emptyStateLabel")
         layout.addWidget(caption)
 
-        self._local_view = QListView()
-        self._local_view.setModel(self._local_model)
-        self._local_view.setAccessibleName("Downloaded tracks")
+        self._local_view = _make_track_table(self._local_model, "Downloaded tracks")
         self._local_view.doubleClicked.connect(self._on_local_track_double_clicked)
         layout.addWidget(self._local_view)
 
         add_button = QPushButton("Add to Selected Playlist")
-        add_button.setToolTip("Add the selected track to the playlist chosen on the right")
+        add_button.setToolTip("Add the selected track to the playlist chosen in the Playlists tab")
         add_button.clicked.connect(self._on_add_to_playlist)
         layout.addWidget(add_button)
 
         return widget
 
-    def _build_playlist_panel(self) -> QWidget:
+    def _build_playlist_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
@@ -171,9 +183,9 @@ class MainWindow(QMainWindow):
         self._playlist_empty_label.setWordWrap(True)
         layout.addWidget(self._playlist_empty_label)
 
-        self._playlist_view = QListView()
-        self._playlist_view.setModel(self._playlist_tracks_model)
-        self._playlist_view.setAccessibleName("Tracks in this playlist")
+        self._playlist_view = _make_track_table(
+            self._playlist_tracks_model, "Tracks in this playlist"
+        )
         self._playlist_view.doubleClicked.connect(self._on_playlist_track_double_clicked)
         layout.addWidget(self._playlist_view)
 
@@ -233,18 +245,32 @@ class MainWindow(QMainWindow):
         seek_row.addWidget(self._duration_label)
         layout.addLayout(seek_row)
 
+        # Qt's own bundled standard icons, not custom artwork - reliable
+        # everywhere (unlike the Unicode glyphs an earlier pass used, which
+        # rendered blank on a system lacking those font glyphs).
+        style = self.style()
         transport_row = QHBoxLayout()
-        prev_button = QPushButton("Prev")
+        prev_button = QPushButton()
+        prev_button.setIcon(style.standardIcon(QStyle.SP_MediaSkipBackward))
         prev_button.setToolTip("Previous track")
+        prev_button.setAccessibleName("Previous track")
         prev_button.clicked.connect(self._player.previous)
-        self._play_pause_button = QPushButton("Play")
+        self._play_pause_button = QPushButton()
+        self._play_icon = style.standardIcon(QStyle.SP_MediaPlay)
+        self._pause_icon = style.standardIcon(QStyle.SP_MediaPause)
+        self._play_pause_button.setIcon(self._play_icon)
         self._play_pause_button.setToolTip("Play or pause the current track")
+        self._play_pause_button.setAccessibleName("Play or pause")
         self._play_pause_button.clicked.connect(self._on_play_pause)
-        stop_button = QPushButton("Stop")
+        stop_button = QPushButton()
+        stop_button.setIcon(style.standardIcon(QStyle.SP_MediaStop))
         stop_button.setToolTip("Stop playback")
+        stop_button.setAccessibleName("Stop")
         stop_button.clicked.connect(self._player.stop)
-        next_button = QPushButton("Next")
+        next_button = QPushButton()
+        next_button.setIcon(style.standardIcon(QStyle.SP_MediaSkipForward))
         next_button.setToolTip("Next track")
+        next_button.setAccessibleName("Next track")
         next_button.clicked.connect(self._player.next)
         for button in (prev_button, self._play_pause_button, stop_button, next_button):
             transport_row.addWidget(button)
@@ -375,7 +401,7 @@ class MainWindow(QMainWindow):
         if not index.isValid():
             return
         new_row = self._playlist_tracks_model.move(index.row(), delta)
-        self._playlist_view.setCurrentIndex(self._playlist_tracks_model.index(new_row))
+        self._playlist_view.setCurrentIndex(self._playlist_tracks_model.index(new_row, 0))
 
     def _on_toggle_shuffle(self) -> None:
         self._player.toggle_shuffle()
@@ -407,14 +433,14 @@ class MainWindow(QMainWindow):
     def _on_play_pause(self) -> None:
         if self._player.is_playing():
             self._player.pause()
-            self._play_pause_button.setText("Play")
+            self._play_pause_button.setIcon(self._play_icon)
         else:
             self._player.play()
-            self._play_pause_button.setText("Pause")
+            self._play_pause_button.setIcon(self._pause_icon)
 
     def _on_track_changed(self, track: object) -> None:
         self._now_playing_label.setText(f"{track.title} — {track.artist}")  # type: ignore[attr-defined]
-        self._play_pause_button.setText("Pause")
+        self._play_pause_button.setIcon(self._pause_icon)
 
     def _on_position_changed(self, ms: int) -> None:
         if not self._seeking:

@@ -1,4 +1,4 @@
-from PySide2.QtCore import QAbstractListModel, QModelIndex, Qt, QThreadPool, Signal
+from PySide2.QtCore import QAbstractTableModel, QModelIndex, Qt, QThreadPool, Signal
 
 from app.api_client import ApiClient, RemoteTrack, RemoteTrackPage
 from app.dao import LocalLibraryDao
@@ -10,12 +10,58 @@ from app.workers import Worker
 # see that these enum members are plain ints at runtime (they are).
 TrackRole = int(Qt.UserRole) + 1  # type: ignore[call-overload]
 
+_COLUMNS = ("Title", "Artist", "Album", "Duration")
 
-class RemoteLibraryModel(QAbstractListModel):
+
+def _format_duration(total_seconds: int) -> str:
+    total_seconds = max(total_seconds, 0)
+    return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
+
+class _TrackTableModel(QAbstractTableModel):
+    """Shared column layout (Title/Artist/Album/Duration) for the three
+    track tables (Browse/Library/Playlist) - a real table instead of a
+    single "Title — Artist" text line per row. Each subclass only manages
+    its own row storage and fetching strategy via `_track_at_row`.
+    """
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(_COLUMNS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = int(Qt.DisplayRole)  # type: ignore[call-overload]
+    ) -> object:
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole and 0 <= section < len(_COLUMNS):
+            return _COLUMNS[section]
+        return None
+
+    def _track_at_row(self, row: int) -> RemoteTrack | LocalTrack:
+        raise NotImplementedError
+
+    def data(self, index: QModelIndex, role: int = int(Qt.DisplayRole)) -> object:  # type: ignore[call-overload]
+        if not index.isValid():
+            return None
+        track = self._track_at_row(index.row())
+        if role == TrackRole:
+            return track
+        if role == Qt.DisplayRole:
+            column = index.column()
+            if column == 0:
+                return track.title
+            if column == 1:
+                return track.artist
+            if column == 2:
+                return track.album or ""
+            if column == 3:
+                return _format_duration(track.duration_seconds)
+        return None
+
+
+class RemoteLibraryModel(_TrackTableModel):
     """Backs the Browse tab. Fetches pages from the server lazily via Qt's
-    canFetchMore/fetchMore hooks (QListView calls these automatically as the
-    user scrolls near the end) so an 8,000-track catalog is never pulled
-    into memory or rendered at once — see DESIGN.md section 4.5.
+    canFetchMore/fetchMore hooks (QTableView calls these automatically as
+    the user scrolls near the end) so an 8,000-track catalog is never
+    pulled into memory or rendered at once — see DESIGN.md section 4.5.
     """
 
     errorOccurred = Signal(str)
@@ -37,15 +83,8 @@ class RemoteLibraryModel(QAbstractListModel):
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._items)
 
-    def data(self, index: QModelIndex, role: int = int(Qt.DisplayRole)) -> object:  # type: ignore[call-overload]
-        if not index.isValid():
-            return None
-        track = self._items[index.row()]
-        if role == Qt.DisplayRole:
-            return f"{track.title} — {track.artist}"
-        if role == TrackRole:
-            return track
-        return None
+    def _track_at_row(self, row: int) -> RemoteTrack:
+        return self._items[row]
 
     def canFetchMore(self, parent: QModelIndex = QModelIndex()) -> bool:
         return not parent.isValid() and not self._loading and not self._exhausted
@@ -88,7 +127,7 @@ class RemoteLibraryModel(QAbstractListModel):
         return self._items[row]
 
 
-class LocalLibraryModel(QAbstractListModel):
+class LocalLibraryModel(_TrackTableModel):
     """Backs the Library tab: the user's downloaded tracks. Same lazy
     fetch-as-you-scroll strategy as RemoteLibraryModel, reading from SQLite
     off the UI thread via a QThreadPool worker.
@@ -109,15 +148,8 @@ class LocalLibraryModel(QAbstractListModel):
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._items)
 
-    def data(self, index: QModelIndex, role: int = int(Qt.DisplayRole)) -> object:  # type: ignore[call-overload]
-        if not index.isValid():
-            return None
-        track = self._items[index.row()]
-        if role == Qt.DisplayRole:
-            return f"{track.title} — {track.artist}"
-        if role == TrackRole:
-            return track
-        return None
+    def _track_at_row(self, row: int) -> LocalTrack:
+        return self._items[row]
 
     def canFetchMore(self, parent: QModelIndex = QModelIndex()) -> bool:
         return not parent.isValid() and not self._loading and not self._exhausted
@@ -162,7 +194,7 @@ class LocalLibraryModel(QAbstractListModel):
         self.endInsertRows()
 
 
-class PlaylistTracksModel(QAbstractListModel):
+class PlaylistTracksModel(_TrackTableModel):
     def __init__(self, service: PlaylistService) -> None:
         super().__init__()
         self._service = service
@@ -172,15 +204,8 @@ class PlaylistTracksModel(QAbstractListModel):
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._items)
 
-    def data(self, index: QModelIndex, role: int = int(Qt.DisplayRole)) -> object:  # type: ignore[call-overload]
-        if not index.isValid():
-            return None
-        track = self._items[index.row()]
-        if role == Qt.DisplayRole:
-            return f"{track.title} — {track.artist}"
-        if role == TrackRole:
-            return track
-        return None
+    def _track_at_row(self, row: int) -> LocalTrack:
+        return self._items[row]
 
     def load(self, playlist_id: int | None) -> None:
         self.beginResetModel()
@@ -199,8 +224,9 @@ class PlaylistTracksModel(QAbstractListModel):
         if not (0 <= new_row < len(self._items)):
             return row
         self._items[row], self._items[new_row] = self._items[new_row], self._items[row]
-        top, bottom = sorted((row, new_row))
-        self.dataChanged.emit(self.index(top), self.index(bottom))
+        top_left = self.index(min(row, new_row), 0)
+        bottom_right = self.index(max(row, new_row), len(_COLUMNS) - 1)
+        self.dataChanged.emit(top_left, bottom_right)
         if self._playlist_id is not None:
             self._service.reorder(self._playlist_id, self.track_ids())
         return new_row

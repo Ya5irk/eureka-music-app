@@ -70,22 +70,33 @@ QPushButton:disabled {
     border-color: #2A2A2A;
 }
 
-QListView {
+QTableView {
     background-color: #181818;
     border: 1px solid #2A2A2A;
     border-radius: 4px;
     outline: none;
+    gridline-color: #2A2A2A;
 }
-QListView::item {
-    padding: 7px 8px;
-    border-radius: 3px;
+QTableView::item {
+    padding: 6px 8px;
 }
-QListView::item:selected {
+QTableView::item:selected {
     background-color: #1B4B45;
     color: #2DD4BF;
 }
-QListView::item:hover:!selected {
+QTableView::item:hover:!selected {
     background-color: #232323;
+}
+QHeaderView::section {
+    background-color: #181818;
+    color: #A0A0A0;
+    padding: 6px 8px;
+    border: none;
+    border-bottom: 1px solid #2A2A2A;
+    border-right: 1px solid #2A2A2A;
+}
+QHeaderView::section:last {
+    border-right: none;
 }
 
 QTabWidget::pane {
