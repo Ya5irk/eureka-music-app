@@ -5,6 +5,10 @@ from app.database import connect
 from app.local_models import LocalTrack, LoopMode, Playlist, PlayState
 
 
+def _split_csv_field(value: str | None) -> list[str]:
+    return [v.strip() for v in value.split(",") if v.strip()] if value else []
+
+
 def _row_to_track(row: sqlite3.Row) -> LocalTrack:
     return LocalTrack(
         id=row["id"],
@@ -15,6 +19,10 @@ def _row_to_track(row: sqlite3.Row) -> LocalTrack:
         local_path=row["local_path"],
         checksum_sha256=row["checksum_sha256"],
         downloaded_at=row["downloaded_at"],
+        release_year=row["release_year"],
+        license=row["license"],
+        tags=_split_csv_field(row["tags"]),
+        genres=_split_csv_field(row["genres"]),
     )
 
 
@@ -27,8 +35,9 @@ class LocalLibraryDao:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO local_track
-                    (id, title, artist, album, duration_seconds, local_path, checksum_sha256)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, title, artist, album, duration_seconds, local_path, checksum_sha256,
+                     release_year, license, tags, genres)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     track.id,
@@ -38,6 +47,10 @@ class LocalLibraryDao:
                     track.duration_seconds,
                     track.local_path,
                     track.checksum_sha256,
+                    track.release_year,
+                    track.license,
+                    ",".join(track.tags) or None,
+                    ",".join(track.genres) or None,
                 ),
             )
             conn.commit()

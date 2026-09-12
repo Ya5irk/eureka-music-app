@@ -11,6 +11,9 @@ class RemoteTrack:
     title: str
     artist: str
     album: str | None
+    release_year: int | None
+    license: str | None
+    tags: list[str]
     duration_seconds: int
     file_size_bytes: int
     checksum_sha256: str
@@ -24,6 +27,9 @@ class RemoteTrack:
             title=data["title"],
             artist=data["artist"],
             album=data.get("album"),
+            release_year=data.get("release_year"),
+            license=data.get("license"),
+            tags=data.get("tags", []),
             duration_seconds=data["duration_seconds"],
             file_size_bytes=data["file_size_bytes"],
             checksum_sha256=data["checksum_sha256"],

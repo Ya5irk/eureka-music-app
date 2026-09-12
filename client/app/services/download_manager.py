@@ -54,6 +54,10 @@ class DownloadManager(QObject):
             local_path=str(dest),
             checksum_sha256=remote.checksum_sha256,
             downloaded_at="",
+            release_year=remote.release_year,
+            license=remote.license,
+            tags=remote.tags,
+            genres=remote.genres,
         )
         self._library.insert_track(track)
         stored = self._library.get(remote.id)

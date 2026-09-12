@@ -39,11 +39,32 @@ CREATE TABLE IF NOT EXISTS play_state (
 """
 
 
+_NEW_LOCAL_TRACK_COLUMNS = (
+    ("release_year", "INTEGER"),
+    ("license", "TEXT"),
+    ("tags", "TEXT"),  # comma-separated
+    ("genres", "TEXT"),  # comma-separated
+)
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        _migrate_local_track_columns(conn)
         conn.commit()
+
+
+def _migrate_local_track_columns(conn: sqlite3.Connection) -> None:
+    """Adds columns to an existing local_track table without touching a
+    user's already-downloaded library/playlists - CREATE TABLE IF NOT
+    EXISTS above only helps for brand new databases, not ones from before
+    these columns existed.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(local_track)")}
+    for column, sql_type in _NEW_LOCAL_TRACK_COLUMNS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE local_track ADD COLUMN {column} {sql_type}")
 
 
 @contextmanager

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 
 
@@ -18,6 +18,10 @@ class LocalTrack:
     local_path: str
     checksum_sha256: str
     downloaded_at: str
+    release_year: int | None = None
+    license: str | None = None
+    tags: list[str] = field(default_factory=list)
+    genres: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

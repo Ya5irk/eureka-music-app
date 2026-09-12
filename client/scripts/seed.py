@@ -9,20 +9,23 @@ Usage:
 
 Idempotent: re-running skips tracks whose checksum is already in the local
 library. See server/scripts/seed.py for notes on tracks.csv's two-header-row
-format; this script duplicates that small amount of parsing rather than
-importing across the server/client boundary (see AGENTS.md — the two are
-independent deployables that only talk over the REST API).
+format and the genres_all/tags/license/release_year fields (confirmed
+against the real downloaded dataset, not just the FMA repo's docs); this
+script duplicates that parsing rather than importing across the
+server/client boundary (see AGENTS.md — the two are independent
+deployables that only talk over the REST API).
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import hashlib
 import shutil
 import sys
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from mutagen import MutagenError
@@ -41,11 +44,52 @@ class FmaRow:
     track_id: int
     title: str
     artist: str
+    album: str
+    genre_top: str
+    genre_ids: list[int] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    license: str = ""
+    release_year: int | None = None
 
 
 def _fma_audio_path(fma_root: Path, track_id: int) -> Path:
     padded = f"{track_id:06d}"
     return fma_root / "fma_small" / padded[:3] / f"{padded}.mp3"
+
+
+def _parse_int_list(raw: str) -> list[int]:
+    try:
+        return [int(x) for x in ast.literal_eval(raw)] if raw else []
+    except (ValueError, SyntaxError):
+        return []
+
+
+def _parse_str_list(raw: str) -> list[str]:
+    try:
+        return [str(x) for x in ast.literal_eval(raw)] if raw else []
+    except (ValueError, SyntaxError):
+        return []
+
+
+def _parse_release_year(raw: str) -> int | None:
+    stripped = raw.strip()
+    if len(stripped) >= 4 and stripped[:4].isdigit():
+        return int(stripped[:4])
+    return None
+
+
+def load_genre_names(fma_root: Path) -> dict[int, str]:
+    genres_csv = fma_root / "fma_metadata" / "genres.csv"
+    if not genres_csv.is_file():
+        return {}
+    mapping: dict[int, str] = {}
+    with genres_csv.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                mapping[int(row["genre_id"])] = row["title"].strip()
+            except (KeyError, ValueError):
+                continue
+    return mapping
 
 
 def read_tracks_csv(csv_path: Path) -> Iterator[FmaRow]:
@@ -67,6 +111,12 @@ def read_tracks_csv(csv_path: Path) -> Iterator[FmaRow]:
 
         title_i = col("track", "title")
         artist_i = col("artist", "name")
+        album_i = col("album", "title")
+        genre_top_i = col("track", "genre_top")
+        genres_all_i = col("track", "genres_all")
+        tags_i = col("track", "tags")
+        license_i = col("track", "license")
+        date_released_i = col("album", "date_released")
 
         for raw in reader:
             if not raw or not raw[0].strip().isdigit():
@@ -75,6 +125,12 @@ def read_tracks_csv(csv_path: Path) -> Iterator[FmaRow]:
                 track_id=int(raw[0]),
                 title=raw[title_i].strip() or f"Track {raw[0]}",
                 artist=raw[artist_i].strip() or "Unknown Artist",
+                album=raw[album_i].strip(),
+                genre_top=raw[genre_top_i].strip(),
+                genre_ids=_parse_int_list(raw[genres_all_i]),
+                tags=_parse_str_list(raw[tags_i]),
+                license=raw[license_i].strip(),
+                release_year=_parse_release_year(raw[date_released_i]),
             )
 
 
@@ -102,6 +158,7 @@ def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
     if not csv_path.is_file():
         raise SystemExit(f"expected metadata CSV at {csv_path}, not found")
 
+    genre_names = load_genre_names(fma_root)
     rows = read_tracks_csv(csv_path)
     if limit is not None:
         rows = (row for i, row in enumerate(rows) if i < limit)
@@ -109,7 +166,8 @@ def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
     if dry_run:
         preview = list(rows)[: limit or 10]
         for row in preview:
-            print(row)
+            names = [genre_names.get(gid, f"#{gid}") for gid in row.genre_ids]
+            print(row, "-> genre names:", names)
         print(f"\n[dry-run] parsed {len(preview)} row(s), wrote nothing")
         return
 
@@ -134,16 +192,24 @@ def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
             settings.downloads_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(audio_path, dest)
 
+        names = [genre_names[gid] for gid in row.genre_ids if gid in genre_names]
+        if not names and row.genre_top:
+            names = [row.genre_top]
+
         dao.insert_track(
             LocalTrack(
                 id=f"seed-{row.track_id}",
                 title=row.title,
                 artist=row.artist,
-                album=None,
+                album=row.album or None,
                 duration_seconds=_probe_duration_seconds(dest),
                 local_path=str(dest),
                 checksum_sha256=checksum,
                 downloaded_at="",
+                release_year=row.release_year,
+                license=row.license or None,
+                tags=row.tags,
+                genres=names,
             )
         )
         inserted += 1
