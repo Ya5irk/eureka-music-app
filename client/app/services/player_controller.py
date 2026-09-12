@@ -39,6 +39,7 @@ class PlayerController(QObject):
         self._loop_mode = LoopMode.NONE
         self._shuffle_on = False
         self._tick_count = 0
+        self._pending_seek_ms: int | None = None
 
     # -- queue / transport -------------------------------------------------
 
@@ -129,10 +130,18 @@ class PlayerController(QObject):
         # stacking play/pause/setPosition calls right on top of a fresh
         # setMedia() - the exact sequence that triggered the GStreamer
         # pipeline freeze described in _play_index's docstring.
+        #
+        # setPosition() is deferred to _on_media_status_changed rather than
+        # called here directly: calling it immediately after setMedia(), before
+        # the backend has actually finished loading the media, is a real race
+        # in Qt5's GStreamer backend - the backend silently resets position
+        # back to 0 once loading completes *after* the early seek, so the
+        # track visibly "restarts" instead of resuming. Confirmed live: this
+        # exact symptom showed up testing crash-resume on real Ubuntu.
+        self._pending_seek_ms = state.position_ms
         self.set_queue(
             track_ids, start_index=start_index, playlist_id=state.playlist_id, start_playing=False
         )
-        self._player.setPosition(state.position_ms)
         self._persist(state.position_ms)  # _play_index above just persisted position 0
 
     # -- internals -----------------------------------------------------------
@@ -166,6 +175,13 @@ class PlayerController(QObject):
             self._persist(position_ms)
 
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
+        if (
+            self._pending_seek_ms is not None
+            and status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia)
+        ):
+            self._player.setPosition(self._pending_seek_ms)
+            self._pending_seek_ms = None
+
         if status != QMediaPlayer.EndOfMedia:
             return
         if self._loop_mode == LoopMode.TRACK:
