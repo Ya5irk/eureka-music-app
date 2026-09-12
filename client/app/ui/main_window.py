@@ -146,9 +146,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._playlist_view)
 
         controls = QHBoxLayout()
-        up_button = QPushButton("▲")
+        up_button = QPushButton("Up")
         up_button.clicked.connect(lambda: self._on_move_track(-1))
-        down_button = QPushButton("▼")
+        down_button = QPushButton("Down")
         down_button.clicked.connect(lambda: self._on_move_track(1))
         remove_button = QPushButton("Remove")
         remove_button.clicked.connect(self._on_remove_from_playlist)
@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         options.addWidget(self._loop_combo)
         layout.addLayout(options)
 
-        play_button = QPushButton("▶ Play Playlist")
+        play_button = QPushButton("Play Playlist")
         play_button.clicked.connect(self._on_play_playlist)
         layout.addWidget(play_button)
 
@@ -194,13 +194,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(seek_row)
 
         transport_row = QHBoxLayout()
-        prev_button = QPushButton("⏮")
+        prev_button = QPushButton("Prev")
         prev_button.clicked.connect(self._player.previous)
-        self._play_pause_button = QPushButton("▶")
+        self._play_pause_button = QPushButton("Play")
         self._play_pause_button.clicked.connect(self._on_play_pause)
-        stop_button = QPushButton("⏹")
+        stop_button = QPushButton("Stop")
         stop_button.clicked.connect(self._player.stop)
-        next_button = QPushButton("⏭")
+        next_button = QPushButton("Next")
         next_button.clicked.connect(self._player.next)
         for button in (prev_button, self._play_pause_button, stop_button, next_button):
             transport_row.addWidget(button)
@@ -347,12 +347,14 @@ class MainWindow(QMainWindow):
     def _on_play_pause(self) -> None:
         if self._player.is_playing():
             self._player.pause()
+            self._play_pause_button.setText("Play")
         else:
             self._player.play()
+            self._play_pause_button.setText("Pause")
 
     def _on_track_changed(self, track: object) -> None:
         self._now_playing_label.setText(f"{track.title} — {track.artist}")  # type: ignore[attr-defined]
-        self._play_pause_button.setText("⏸")
+        self._play_pause_button.setText("Pause")
 
     def _on_position_changed(self, ms: int) -> None:
         if not self._seeking:
