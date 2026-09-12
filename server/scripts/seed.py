@@ -1,11 +1,11 @@
 """Seed the server's Postgres catalog + storage volume from an unzipped
-FMA Small folder (fma_small/ + fma_metadata/tracks.csv side by side).
+FMA Small folder (fma_small/ + fma_metadata/ side by side).
 
 Usage (inside the running `api` container, so it shares DATABASE_URL and
 STORAGE_DIR with the server):
 
-    docker compose exec api python scripts/seed.py /data/fma --limit 100
-    docker compose exec api python scripts/seed.py /data/fma
+    docker compose exec api python -m scripts.seed /data/fma --limit 100
+    docker compose exec api python -m scripts.seed /data/fma
 
 Idempotent: re-running skips tracks whose audio checksum is already in the
 catalog, so an interrupted run (this is a ~30GB dataset) can safely resume.
@@ -17,18 +17,25 @@ pandas just for that — reasonable for a one-off, non-performance-critical
 import script. If your downloaded tracks.csv has a different column layout
 than the one documented at https://github.com/mdeff/fma, run with
 --dry-run first: it prints the detected columns before writing anything.
+
+Uses every catalog-relevant field tracks.csv actually has, not just the
+minimum: track/genres_all (all genre tags, not only genre_top) resolved to
+names via genres.csv, track/tags, track/license, and album/date_released
+(-> release year). All confirmed against the real downloaded dataset, not
+guessed from the FMA repo's docs alone.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import csv
 import hashlib
 import shutil
 import sys
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select
@@ -49,11 +56,57 @@ class FmaRow:
     artist: str
     album: str
     genre_top: str
+    genre_ids: list[int] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    license: str = ""
+    release_year: int | None = None
 
 
 def _fma_audio_path(fma_root: Path, track_id: int) -> Path:
     padded = f"{track_id:06d}"
     return fma_root / "fma_small" / padded[:3] / f"{padded}.mp3"
+
+
+def _parse_int_list(raw: str) -> list[int]:
+    """Parses FMA's Python-list-repr columns, e.g. "[17, 10, 76]" -> [17, 10, 76]."""
+    try:
+        return [int(x) for x in ast.literal_eval(raw)] if raw else []
+    except (ValueError, SyntaxError):
+        return []
+
+
+def _parse_str_list(raw: str) -> list[str]:
+    try:
+        return [str(x) for x in ast.literal_eval(raw)] if raw else []
+    except (ValueError, SyntaxError):
+        return []
+
+
+def _parse_release_year(raw: str) -> int | None:
+    # Observed format: "2009-01-05 00:00:00"; empty when an album has no
+    # recorded release date.
+    stripped = raw.strip()
+    if len(stripped) >= 4 and stripped[:4].isdigit():
+        return int(stripped[:4])
+    return None
+
+
+def load_genre_names(fma_root: Path) -> dict[int, str]:
+    """genres.csv: genre_id,#tracks,parent,title,top_level — tracks.csv only
+    gives genre *ids* for genres_all, so this id -> title lookup is what
+    makes those ids meaningful.
+    """
+    genres_csv = fma_root / "fma_metadata" / "genres.csv"
+    if not genres_csv.is_file():
+        return {}
+    mapping: dict[int, str] = {}
+    with genres_csv.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                mapping[int(row["genre_id"])] = row["title"].strip()
+            except (KeyError, ValueError):
+                continue
+    return mapping
 
 
 def read_tracks_csv(csv_path: Path) -> Iterator[FmaRow]:
@@ -76,7 +129,11 @@ def read_tracks_csv(csv_path: Path) -> Iterator[FmaRow]:
         title_i = col("track", "title")
         artist_i = col("artist", "name")
         album_i = col("album", "title")
-        genre_i = col("track", "genre_top")
+        genre_top_i = col("track", "genre_top")
+        genres_all_i = col("track", "genres_all")
+        tags_i = col("track", "tags")
+        license_i = col("track", "license")
+        date_released_i = col("album", "date_released")
 
         for raw in reader:
             if not raw or not raw[0].strip().isdigit():
@@ -86,7 +143,11 @@ def read_tracks_csv(csv_path: Path) -> Iterator[FmaRow]:
                 title=raw[title_i].strip() or f"Track {raw[0]}",
                 artist=raw[artist_i].strip() or "Unknown Artist",
                 album=raw[album_i].strip(),
-                genre_top=raw[genre_i].strip(),
+                genre_top=raw[genre_top_i].strip(),
+                genre_ids=_parse_int_list(raw[genres_all_i]),
+                tags=_parse_str_list(raw[tags_i]),
+                license=raw[license_i].strip(),
+                release_year=_parse_release_year(raw[date_released_i]),
             )
 
 
@@ -98,20 +159,22 @@ def _sha256_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
-async def _get_or_create_genre(
-    db: AsyncSession, name: str, cache: dict[str, Genre]
-) -> Genre | None:
-    if not name:
-        return None
-    if name in cache:
-        return cache[name]
-    genre = await db.scalar(select(Genre).where(Genre.name == name))
-    if genre is None:
-        genre = Genre(name=name)
-        db.add(genre)
-        await db.flush()
-    cache[name] = genre
-    return genre
+async def _get_or_create_genres(
+    db: AsyncSession, names: list[str], cache: dict[str, Genre]
+) -> list[Genre]:
+    genres = []
+    for name in names:
+        if not name:
+            continue
+        if name not in cache:
+            genre = await db.scalar(select(Genre).where(Genre.name == name))
+            if genre is None:
+                genre = Genre(name=name)
+                db.add(genre)
+                await db.flush()
+            cache[name] = genre
+        genres.append(cache[name])
+    return genres
 
 
 async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
@@ -120,6 +183,7 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
     if not csv_path.is_file():
         raise SystemExit(f"expected metadata CSV at {csv_path}, not found")
 
+    genre_names = load_genre_names(fma_root)
     rows = read_tracks_csv(csv_path)
     if limit is not None:
         rows = (row for i, row in enumerate(rows) if i < limit)
@@ -127,7 +191,8 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
     if dry_run:
         preview = list(rows)[: limit or 10]
         for row in preview:
-            print(row)
+            names = [genre_names.get(gid, f"#{gid}") for gid in row.genre_ids]
+            print(row, "-> genre names:", names)
         print(f"\n[dry-run] parsed {len(preview)} row(s), wrote nothing")
         return
 
@@ -154,17 +219,24 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
                 settings.storage_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(audio_path, dest)
 
-            genre = await _get_or_create_genre(db, row.genre_top, genre_cache)
+            names = [genre_names[gid] for gid in row.genre_ids if gid in genre_names]
+            if not names and row.genre_top:
+                names = [row.genre_top]  # fall back to the single top genre
+            genres = await _get_or_create_genres(db, names, genre_cache)
+
             track = Track(
                 title=row.title,
                 artist=row.artist,
                 album=row.album or None,
+                release_year=row.release_year,
+                license=row.license or None,
+                tags=",".join(row.tags) or None,
                 duration_seconds=probe_duration_seconds(dest),
                 file_path=str(dest),
                 file_size_bytes=dest.stat().st_size,
                 checksum_sha256=checksum,
                 source="seed",
-                genres=[genre] if genre else [],
+                genres=genres,
             )
             db.add(track)
             inserted += 1

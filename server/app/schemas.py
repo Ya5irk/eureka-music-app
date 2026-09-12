@@ -10,6 +10,9 @@ class TrackOut(BaseModel):
     title: str
     artist: str
     album: str | None
+    release_year: int | None
+    license: str | None
+    tags: list[str]
     duration_seconds: int
     file_size_bytes: int
     checksum_sha256: str
@@ -19,6 +22,7 @@ class TrackOut(BaseModel):
 
     @classmethod
     def from_orm_track(cls, track: object) -> "TrackOut":
+        tags_str: str | None = track.tags  # type: ignore[attr-defined]
         return cls.model_validate(
             {
                 **{
@@ -28,6 +32,8 @@ class TrackOut(BaseModel):
                         "title",
                         "artist",
                         "album",
+                        "release_year",
+                        "license",
                         "duration_seconds",
                         "file_size_bytes",
                         "checksum_sha256",
@@ -35,6 +41,7 @@ class TrackOut(BaseModel):
                         "created_at",
                     )
                 },
+                "tags": [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else [],
                 "genres": sorted(g.name for g in track.genres),  # type: ignore[attr-defined]
             }
         )

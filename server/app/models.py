@@ -40,6 +40,9 @@ class Track(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     artist: Mapped[str] = mapped_column(String(500), nullable=False)
     album: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    release_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    license: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)  # comma-separated
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     file_path: Mapped[str] = mapped_column(String(1000), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
