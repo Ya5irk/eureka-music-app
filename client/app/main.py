@@ -12,6 +12,7 @@ from app.services.player_controller import PlayerController
 from app.services.playlist_service import PlaylistService
 from app.services.upload_manager import UploadManager
 from app.ui.main_window import MainWindow
+from app.ui.style import STYLESHEET
 
 
 def main() -> None:
@@ -20,6 +21,7 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName("Eureka Music")
+    app.setStyleSheet(STYLESHEET)
 
     api = ApiClient(settings.api_base_url)
     library_dao = LocalLibraryDao(settings.db_path)
