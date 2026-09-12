@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (
     QComboBox,
@@ -251,7 +253,7 @@ class MainWindow(QMainWindow):
             return
         title, artist, album, genres = dialog.values()
         self.statusBar().showMessage(f"Uploading {title}…")
-        self._upload_manager.upload(path, title, artist, album or None, genres or None)
+        self._upload_manager.upload(Path(path), title, artist, album or None, genres or None)
 
     def _on_upload_completed(self, track: object) -> None:
         self.statusBar().showMessage(f"Uploaded {track.title}", 3000)  # type: ignore[attr-defined]
