@@ -95,6 +95,9 @@ erDiagram
         text title
         text artist
         text album
+        int  release_year "nullable, from album/date_released"
+        text license "nullable, FMA per-track license string"
+        text tags "comma-separated, from track/tags"
         int  duration_seconds
         text file_path
         bigint file_size_bytes
@@ -114,7 +117,13 @@ erDiagram
     GENRE ||--o{ TRACK_GENRE : tags
 ```
 
-- Many-to-many `TRACK_GENRE` because FMA tracks carry multiple genre tags.
+- Many-to-many `TRACK_GENRE` because FMA tracks carry multiple genre tags
+  (`track/genres_all`, resolved against `fma_metadata/genres.csv`), not just
+  the single `track/genre_top` used as a fallback when `genres_all` is empty
+  or its ids aren't in `genres.csv`.
+- `release_year`, `license`, `tags` surface the rest of tracks.csv's fields
+  that the brief lists as in scope (`album`, `genres`, `tags`) rather than
+  leaving them unused — see the seed script's parsing in §5.
 - `checksum_sha256` lets both seed and upload paths de-duplicate identical
   files and lets the client verify a download completed correctly.
 - Indexes: btree on `(lower(title))`, `(lower(artist))` for search-by-prefix,
@@ -189,6 +198,10 @@ erDiagram
         text title
         text artist
         text album
+        int  release_year "nullable"
+        text license "nullable"
+        text tags "comma-separated"
+        text genres "comma-separated genre names"
         int  duration_seconds
         text local_path
         text checksum_sha256
@@ -216,6 +229,12 @@ erDiagram
     LOCAL_TRACK ||--o{ PLAYLIST_TRACK : referenced_by
 ```
 
+- `LOCAL_TRACK.genres`/`tags` are denormalized comma-separated text, not a
+  join table like the server's `TRACK_GENRE` — the client's SQLite schema is
+  migrated non-destructively (`ALTER TABLE ADD COLUMN` on existing installs,
+  see `client/app/database.py`), so a normalized many-to-many would need a
+  real migration path this app doesn't otherwise need; the server remains
+  the source of truth for genre data either way.
 - `PLAY_STATE` is a single-row table updated on every play/pause/seek/track
   change (throttled to ~1 write/sec while playing) — this is what makes
   playback position/queue survive a SIGKILL or reboot, per the requirement.

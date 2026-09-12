@@ -7,6 +7,10 @@ erDiagram
         text title
         text artist
         text album
+        int  release_year "nullable"
+        text license "nullable"
+        text tags "comma-separated"
+        text genres "comma-separated genre names"
         int  duration_seconds
         text local_path
         text checksum_sha256

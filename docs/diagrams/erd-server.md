@@ -7,6 +7,9 @@ erDiagram
         text title
         text artist
         text album
+        int  release_year "nullable, from album/date_released"
+        text license "nullable, FMA per-track license string"
+        text tags "comma-separated, from track/tags"
         int  duration_seconds
         text file_path
         bigint file_size_bytes

@@ -30,9 +30,12 @@ Robotics full-time software engineer take-home assignment.
 Design phase complete (architecture, diagrams, AI-collaboration docs).
 Server and client both have working implementations of the required
 minimum feature set, with passing test suites — see the commit history for
-how the work was decomposed. Not yet verified end-to-end against a live
-`docker compose` stack or the full 8,000-track FMA Small dataset; that
-verification, plus the bonus features in `DESIGN.md` §7, are next.
+how the work was decomposed. Verified end-to-end on a real Ubuntu 22.04
+machine: live `docker compose` stack, full 8,000-track FMA Small seed,
+client GUI exercised against it (browse/search, download, playback incl.
+crash-safe resume, playlists, upload). The bonus features in `DESIGN.md`
+§7 (visualizer, similar-tracks, recommend-next) were not attempted — the
+required scope took priority over the 5-day window.
 
 ## Data
 
