@@ -173,6 +173,76 @@ class PlaylistDao:
             conn.commit()
 
 
+class StatsDao:
+    """Backs the listening-stats dashboard bonus feature: a log of "track
+    started playing" events, aggregated into simple top-artist/top-genre/
+    recently-played views. Deliberately just counts play *starts*, not
+    listen-through percentage or skip detection - a reasonable, honestly-
+    documented simplification rather than something more elaborate.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+
+    def log_play(self, track_id: str) -> None:
+        with connect(self._db_path) as conn:
+            conn.execute("INSERT INTO play_event (track_id) VALUES (?)", (track_id,))
+            conn.commit()
+
+    def total_plays(self) -> int:
+        with connect(self._db_path) as conn:
+            (n,) = conn.execute("SELECT COUNT(*) FROM play_event").fetchone()
+            return int(n)
+
+    def total_listening_seconds(self) -> int:
+        with connect(self._db_path) as conn:
+            (total,) = conn.execute(
+                """
+                SELECT COALESCE(SUM(lt.duration_seconds), 0)
+                FROM play_event pe JOIN local_track lt ON lt.id = pe.track_id
+                """
+            ).fetchone()
+            return int(total)
+
+    def top_artists(self, limit: int = 5) -> list[tuple[str, int]]:
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT lt.artist AS artist, COUNT(*) AS play_count
+                FROM play_event pe JOIN local_track lt ON lt.id = pe.track_id
+                GROUP BY lt.artist ORDER BY play_count DESC, artist ASC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [(row["artist"], row["play_count"]) for row in rows]
+
+    def top_genres(self, limit: int = 5) -> list[tuple[str, int]]:
+        # genres is stored comma-separated per track (see _row_to_track), so
+        # this can't be a plain GROUP BY - tally in Python instead.
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                "SELECT lt.genres AS genres "
+                "FROM play_event pe JOIN local_track lt ON lt.id = pe.track_id"
+            ).fetchall()
+        counts: dict[str, int] = {}
+        for row in rows:
+            for genre in _split_csv_field(row["genres"]):
+                counts[genre] = counts.get(genre, 0) + 1
+        return sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+
+    def recent_plays(self, limit: int = 20) -> list[tuple[LocalTrack, str]]:
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT lt.*, pe.played_at AS played_at
+                FROM play_event pe JOIN local_track lt ON lt.id = pe.track_id
+                ORDER BY pe.id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [(_row_to_track(row), row["played_at"]) for row in rows]
+
+
 class PlayStateDao:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path

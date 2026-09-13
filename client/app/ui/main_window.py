@@ -24,7 +24,7 @@ from PySide2.QtWidgets import (
 )
 
 from app.api_client import ApiClient
-from app.dao import LocalLibraryDao
+from app.dao import LocalLibraryDao, StatsDao
 from app.local_models import LoopMode
 from app.services.download_manager import DownloadManager
 from app.services.player_controller import PlayerController
@@ -84,6 +84,7 @@ class MainWindow(QMainWindow):
         download_manager: DownloadManager,
         upload_manager: UploadManager,
         player: PlayerController,
+        stats_dao: StatsDao,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Eureka Music")
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow):
         self._download_manager = download_manager
         self._upload_manager = upload_manager
         self._player = player
+        self._stats_dao = stats_dao
         self._pool = QThreadPool.globalInstance()
         self._pending_recommend_track_id: str | None = None
         self._visualizer_timer = QTimer(self)
@@ -117,6 +119,10 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._build_browse_tab(), "Browse")
         tabs.addTab(self._build_library_tab(), "Library")
         tabs.addTab(self._build_playlist_tab(), "Playlists")
+        stats_index = tabs.addTab(self._build_stats_tab(), "Stats")
+        tabs.currentChanged.connect(
+            lambda index: self._refresh_stats() if index == stats_index else None
+        )
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -249,6 +255,26 @@ class MainWindow(QMainWindow):
         play_button = QPushButton("Play Playlist")
         play_button.clicked.connect(self._on_play_playlist)
         layout.addWidget(play_button)
+
+        return widget
+
+    def _build_stats_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        caption = QLabel("Your listening activity, from local play history.")
+        caption.setObjectName("emptyStateLabel")
+        layout.addWidget(caption)
+
+        self._stats_label = QLabel("Switch to this tab to load stats…")
+        self._stats_label.setWordWrap(True)
+        self._stats_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._stats_label.setTextFormat(Qt.RichText)
+        layout.addWidget(self._stats_label, stretch=1)
+
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(self._refresh_stats)
+        layout.addWidget(refresh_button)
 
         return widget
 
@@ -518,6 +544,49 @@ class MainWindow(QMainWindow):
 
     def _on_visualizer_timeout(self) -> None:
         self._visualizer.set_unavailable("Visualizer unavailable on this audio backend")
+
+    # -- stats dashboard -------------------------------------------------
+
+    def _refresh_stats(self) -> None:
+        worker = Worker(self._compute_stats_html)
+        worker.signals.result.connect(self._on_stats_computed)
+        self._pool.start(worker)
+
+    def _compute_stats_html(self) -> str:
+        total_plays = self._stats_dao.total_plays()
+        total_seconds = self._stats_dao.total_listening_seconds()
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes = remainder // 60
+
+        def _section(title: str, rows: list[str]) -> list[str]:
+            return [f"<b>{title}:</b>"] + [f"&nbsp;&nbsp;{row}" for row in (rows or ["(none yet)"])]
+
+        lines = [
+            f"<b>Total plays:</b> {total_plays}",
+            f"<b>Total listening time:</b> {hours}h {minutes}m",
+            "",
+            *_section(
+                "Top artists",
+                [f"{artist} — {count}" for artist, count in self._stats_dao.top_artists()],
+            ),
+            "",
+            *_section(
+                "Top genres",
+                [f"{genre} — {count}" for genre, count in self._stats_dao.top_genres()],
+            ),
+            "",
+            *_section(
+                "Recently played",
+                [
+                    f"{track.title} — {track.artist} ({played_at})"
+                    for track, played_at in self._stats_dao.recent_plays(limit=10)
+                ],
+            ),
+        ]
+        return "<br>".join(lines)
+
+    def _on_stats_computed(self, html: object) -> None:
+        self._stats_label.setText(html)  # type: ignore[arg-type]
 
     def _on_position_changed(self, ms: int) -> None:
         if not self._seeking:

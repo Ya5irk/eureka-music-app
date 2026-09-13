@@ -5,7 +5,7 @@ from PySide2.QtWidgets import QApplication
 
 from app.api_client import ApiClient
 from app.config import load_settings
-from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao
+from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao, StatsDao
 from app.database import init_db
 from app.services.download_manager import DownloadManager
 from app.services.player_controller import PlayerController
@@ -27,11 +27,12 @@ def main() -> None:
     library_dao = LocalLibraryDao(settings.db_path)
     playlist_dao = PlaylistDao(settings.db_path)
     state_dao = PlayStateDao(settings.db_path)
+    stats_dao = StatsDao(settings.db_path)
 
     download_manager = DownloadManager(api, library_dao, settings.downloads_dir)
     upload_manager = UploadManager(api)
     playlist_service = PlaylistService(playlist_dao)
-    player = PlayerController(library_dao, playlist_dao, state_dao)
+    player = PlayerController(library_dao, playlist_dao, state_dao, stats_dao)
 
     window = MainWindow(
         api=api,
@@ -40,6 +41,7 @@ def main() -> None:
         download_manager=download_manager,
         upload_manager=upload_manager,
         player=player,
+        stats_dao=stats_dao,
     )
     window.resize(1080, 680)
     window.show()

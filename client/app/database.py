@@ -36,6 +36,16 @@ CREATE TABLE IF NOT EXISTS play_state (
     playlist_index INTEGER NOT NULL DEFAULT 0,
     shuffle_on INTEGER NOT NULL DEFAULT 0
 );
+
+-- One row per "track started playing" - backs the listening-stats
+-- dashboard. A brand-new table, so CREATE TABLE IF NOT EXISTS is enough
+-- even for an existing install (unlike local_track's added columns below,
+-- which need the explicit ALTER TABLE migration).
+CREATE TABLE IF NOT EXISTS play_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id TEXT NOT NULL REFERENCES local_track(id) ON DELETE CASCADE,
+    played_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 

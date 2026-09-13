@@ -136,6 +136,38 @@ def test_restore_last_state_rebuilds_queue(qtbot, daos: Daos, tmp_path: Path) ->
     # real decoding via live testing on the actual target platform (Ubuntu).
 
 
+def test_playing_a_track_logs_a_play_event(qtbot, daos: Daos, stats_dao, tmp_path: Path) -> None:
+    controller = PlayerController(daos.library, daos.playlist, daos.state, stats_dao)
+    for i in range(3):
+        f = tmp_path / f"t{i}.mp3"
+        f.write_bytes(b"not-real-audio")
+        daos.library.insert_track(make_track(f"t{i}", local_path=str(f)))
+
+    controller.set_queue(["t0", "t1", "t2"])
+    assert stats_dao.total_plays() == 1
+
+    controller.next()
+    assert stats_dao.total_plays() == 2
+
+
+def test_restore_last_state_does_not_log_a_play_event(
+    qtbot, daos: Daos, stats_dao, tmp_path: Path
+) -> None:
+    for i in range(3):
+        f = tmp_path / f"t{i}.mp3"
+        f.write_bytes(b"not-real-audio")
+        daos.library.insert_track(make_track(f"t{i}", local_path=str(f)))
+
+    controller = PlayerController(daos.library, daos.playlist, daos.state, stats_dao)
+    controller.set_queue(["t0", "t1", "t2"])
+    assert stats_dao.total_plays() == 1
+
+    fresh = PlayerController(daos.library, daos.playlist, daos.state, stats_dao)
+    fresh.restore_last_state()
+
+    assert stats_dao.total_plays() == 1  # resuming state is not a new listen
+
+
 def test_toggle_shuffle_off_restores_manual_order(qtbot, daos: Daos, tmp_path: Path) -> None:
     controller = _make_controller(daos, tmp_path)
     pid = daos.playlist.create("Mix")

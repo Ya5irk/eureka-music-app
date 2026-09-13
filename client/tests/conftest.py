@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
 
-from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao  # noqa: E402
+from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao, StatsDao  # noqa: E402
 from app.database import init_db  # noqa: E402
 from app.local_models import LocalTrack  # noqa: E402
 
@@ -41,22 +41,33 @@ def state_dao(db_path: Path) -> PlayStateDao:
 
 
 @pytest.fixture
+def stats_dao(db_path: Path) -> StatsDao:
+    return StatsDao(db_path)
+
+
+@pytest.fixture
 def daos(library_dao: LocalLibraryDao, playlist_dao: PlaylistDao, state_dao: PlayStateDao) -> Daos:
     return Daos(library=library_dao, playlist=playlist_dao, state=state_dao)
 
 
 def make_track(
-    id_: str, title: str = "T", artist: str = "A", local_path: str = "x.mp3"
+    id_: str,
+    title: str = "T",
+    artist: str = "A",
+    local_path: str = "x.mp3",
+    duration_seconds: int = 180,
+    genres: list[str] | None = None,
 ) -> LocalTrack:
     return LocalTrack(
         id=id_,
         title=title,
         artist=artist,
         album=None,
-        duration_seconds=180,
+        duration_seconds=duration_seconds,
         local_path=local_path,
         checksum_sha256=f"checksum-{id_}",
         downloaded_at="",
+        genres=genres or [],
     )
 
 

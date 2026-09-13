@@ -10,7 +10,7 @@ from PySide2.QtMultimedia import (
 )
 
 from app.audio_levels import pcm_bytes_to_levels
-from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao
+from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao, StatsDao
 from app.local_models import LocalTrack, LoopMode, PlayState
 
 _POSITION_SAVE_EVERY_N_TICKS = 4  # QMediaPlayer notifies ~4x/sec -> persist ~1x/sec
@@ -28,11 +28,13 @@ class PlayerController(QObject):
         library_dao: LocalLibraryDao,
         playlist_dao: PlaylistDao,
         state_dao: PlayStateDao,
+        stats_dao: StatsDao | None = None,
     ) -> None:
         super().__init__()
         self._library = library_dao
         self._playlist_dao = playlist_dao
         self._state_dao = state_dao
+        self._stats_dao = stats_dao
 
         self._player = QMediaPlayer()
         self._player.setVolume(100)
@@ -186,6 +188,11 @@ class PlayerController(QObject):
                 self._player.play()
             else:
                 self._player.pause()
+            # Only the genuine "start playing this track now" path (never
+            # the crash-resume branch above, which is restoring state, not
+            # a new listen) counts toward the stats dashboard.
+            if self._stats_dao is not None:
+                self._stats_dao.log_play(track.id)
         self.trackChanged.emit(track)
         self._persist(position_ms=0)
 
