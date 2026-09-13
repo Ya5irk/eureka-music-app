@@ -45,7 +45,5 @@ completed against the full 8,000-track catalog.
 
 ## Data
 
-This repo does not contain the [FMA Small](https://github.com/mdeff/fma)
-dataset. Download `fma_small.zip` and `fma_metadata.zip` separately, unzip
-them, and pass the path to the seed scripts described in the server/client
-READMEs.
+FMA Small isn't in this repo (per the assignment instructions) — pass its
+unzipped path to the seed scripts described in the server/client READMEs.
