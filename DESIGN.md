@@ -113,10 +113,21 @@ erDiagram
         uuid track_id FK
         int genre_id FK
     }
+    TRACK_FEATURE {
+        uuid track_id PK "FK to TRACK, one row per track"
+        json vector "40-dim MFCC mean+std, see app/audio_features.py"
+    }
     TRACK ||--o{ TRACK_GENRE : has
     GENRE ||--o{ TRACK_GENRE : tags
+    TRACK ||--o| TRACK_FEATURE : has
 ```
 
+- `TRACK_FEATURE` backs the "similar tracks"/"recommend next" bonus
+  features (§7) — a precomputed audio-content vector, one row per track
+  that was successfully analyzed (a track can lack one if its clip was
+  corrupt/unreadable at seed time). `JSON`, not a Postgres-only `ARRAY`,
+  so the same model works against the SQLite DB the test suite runs
+  against.
 - Many-to-many `TRACK_GENRE` because FMA tracks carry multiple genre tags
   (`track/genres_all`, resolved against `fma_metadata/genres.csv`), not just
   the single `track/genre_top` used as a fallback when `genres_all` is empty
@@ -140,6 +151,8 @@ erDiagram
 | GET    | `/tracks/{id}`               | single track metadata                      |
 | GET    | `/tracks/{id}/audio`         | download audio (supports `Range`)          |
 | POST   | `/tracks`                    | upload new track (multipart: file + metadata) |
+| GET    | `/tracks/{id}/similar`       | bonus: audio-content similarity ranking (§7) |
+| GET    | `/tracks/{id}/recommend-next`| bonus: nearest unplayed track, `exclude` param (§7) |
 | GET    | `/genres`                    | distinct genre list, for filter UI         |
 
 Pagination is **cursor-based** (opaque cursor over `created_at,id`), not
@@ -225,10 +238,22 @@ erDiagram
         integer playlist_index
         integer shuffle_on
     }
+    PLAY_EVENT {
+        integer id PK
+        text track_id FK
+        text played_at
+    }
     PLAYLIST ||--o{ PLAYLIST_TRACK : contains
     LOCAL_TRACK ||--o{ PLAYLIST_TRACK : referenced_by
+    LOCAL_TRACK ||--o{ PLAY_EVENT : played_in
 ```
 
+- `PLAY_EVENT` backs the listening-stats dashboard bonus feature (§7): one
+  row per track actually started (logged from `PlayerController`'s normal
+  playback path only, never from crash-resume restoration - resuming isn't
+  a new listen). A brand-new table, so a plain `CREATE TABLE IF NOT EXISTS`
+  is enough even on an existing install, unlike `local_track`'s added
+  columns above.
 - `LOCAL_TRACK.genres`/`tags` are denormalized comma-separated text, not a
   join table like the server's `TRACK_GENRE` — the client's SQLite schema is
   migrated non-destructively (`ALTER TABLE ADD COLUMN` on existing installs,
@@ -331,23 +356,44 @@ The dataset itself is never committed (`.gitignore` excludes
 - **API docs**: FastAPI's generated OpenAPI/Swagger UI at `/docs`, no
   hand-maintained duplicate.
 
-## 7. Bonus features (time-permitting, after minimum scope is solid)
+## 7. Bonus features
 
-Ordered by effort/impact, only attempted once the required feature set is
-complete and non-functional requirements are demonstrated at full scale:
+Implemented after the required minimum scope was solid and verified at
+full scale. The first three are the assignment brief's own bonus-feature
+examples; the last two are ours, chosen to be genuinely useful rather than
+cosmetic (the brief explicitly deprioritizes visual polish).
 
-1. **Now-playing visualizer**: lightweight 2D bar/waveform visualizer driven
-   by `QAudioProbe`/`QMediaPlayer` buffer taps + `numpy` FFT, rendered with
-   `QPainter` — no extra native deps beyond what PySide2 already brings.
-   2D chosen over 3D deliberately: matches "not looking for pixel-perfect
-   visuals," keeps the risk/effort low, larger payoff (audio pipeline
-   correctness) elsewhere.
-2. **"Find similar tracks"**: at seed time, precompute a lightweight feature
-   vector per track (e.g. MFCC means via `librosa`, computed once, stored
-   alongside metadata); similarity = cosine distance in that vector space,
-   exposed via `GET /tracks/{id}/similar`.
-3. **"Recommend next"**: reuses the same feature space — nearest unplayed
-   track to the currently playing one, with a genre-match bonus.
+1. **Now-playing visualizer** (`client/app/audio_levels.py` +
+   `app/ui/visualizer_widget.py`): `QAudioProbe` taps real `QMediaPlayer`
+   buffers; each buffer's raw PCM is FFT'd and collapsed into log-spaced
+   bands (bass gets more bars than a linear split would give it) and
+   rendered as 2D bars — no extra native deps beyond `numpy`. 2D over 3D
+   was deliberate: the brief explicitly isn't grading visual polish, so the
+   payoff is in the audio pipeline being real, not in the rendering. Since
+   this project already hit real GStreamer-backend surprises elsewhere
+   (duration()/pause() during crash-resume), the client starts a timeout on
+   every track change and shows an honest "unavailable on this backend"
+   message rather than a visualizer that just silently looks frozen, if no
+   buffer ever arrives.
+2. **Find similar tracks** (`server/app/audio_features.py`): a real
+   audio-content signal, not a metadata heuristic — at seed/upload time,
+   extract a 40-dim feature vector per track (mean+std of 20 MFCCs via
+   `librosa`) and rank every other track by cosine similarity, exposed via
+   `GET /tracks/{id}/similar`.
+3. **Recommend next**: same feature space as above, `GET
+   /tracks/{id}/recommend-next?exclude=...` — nearest *unplayed* track
+   (caller passes already-played ids) to the one currently playing, with a
+   small bonus for sharing a genre with the source track.
+4. **Listening stats dashboard** (ours): a `play_event` log (one row per
+   track actually started, explicitly not logged during crash-resume
+   restoration) aggregated into total plays/listening time, top
+   artists/genres, and recently played — a new "Stats" tab in the client.
+5. **Playlist export/import via M3U** (ours): standard Extended M3U, real
+   interoperability with other players. Import matches entries against the
+   *local* library only (by path, falling back to filename so an .m3u from
+   a different machine/install still resolves) — it never fetches a file
+   the .m3u references that isn't already downloaded here, keeping the
+   FMA-only sourcing rule intact.
 
 ## 8. Open questions / risks
 

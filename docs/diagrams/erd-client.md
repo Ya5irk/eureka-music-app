@@ -34,8 +34,14 @@ erDiagram
         integer playlist_index
         integer shuffle_on
     }
+    PLAY_EVENT {
+        integer id PK
+        text track_id FK
+        text played_at
+    }
     PLAYLIST ||--o{ PLAYLIST_TRACK : contains
     LOCAL_TRACK ||--o{ PLAYLIST_TRACK : referenced_by
+    LOCAL_TRACK ||--o{ PLAY_EVENT : played_in
 ```
 
 See [DESIGN.md §4.2](../../DESIGN.md#42-data-model-client--sqlite) for

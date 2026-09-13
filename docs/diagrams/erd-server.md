@@ -25,8 +25,13 @@ erDiagram
         uuid track_id FK
         int genre_id FK
     }
+    TRACK_FEATURE {
+        uuid track_id PK "FK to TRACK, one row per track"
+        json vector "40-dim MFCC mean+std, see app/audio_features.py"
+    }
     TRACK ||--o{ TRACK_GENRE : has
     GENRE ||--o{ TRACK_GENRE : tags
+    TRACK ||--o| TRACK_FEATURE : has
 ```
 
 See [DESIGN.md §3.2](../../DESIGN.md#32-data-model-server--postgres) for
