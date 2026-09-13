@@ -70,7 +70,7 @@ Idempotent: re-running skips tracks already present by checksum.
 pytest
 ```
 
-47+ tests cover the DAOs (SQLite persistence, playlist ordering, play-state
+51+ tests cover the DAOs (SQLite persistence, playlist ordering, play-state
 round-trips, listening-stats aggregation), `PlaylistService` (shuffle never
 mutates manual order — `DESIGN.md` §4.2 — plus M3U export/import matching
 against the local library), `ApiClient` (against `httpx.MockTransport`, no
@@ -78,8 +78,9 @@ live server needed, including the similar-tracks/recommend-next calls),
 `DownloadManager` (via `pytest-qt`'s `qtbot`, including the checksum-dedupe
 path that skips the network entirely), `PlayerController` (queue
 navigation, loop modes, shuffle, crash-safe resume, and that a play-event is
-logged on real playback but not during crash-resume restoration), the pure
-FFT/banding logic behind the visualizer (`app/audio_levels.py`, no live
+logged on real playback but not during crash-resume restoration), the
+now-playing indicator on the track table models (`app/ui/models.py`), the
+pure FFT/banding logic behind the visualizer (`app/audio_levels.py`, no live
 audio pipeline needed), and the seed script's CSV parsing. Tests run
 headless via `QT_QPA_PLATFORM=offscreen`, set automatically in
 `tests/conftest.py`.

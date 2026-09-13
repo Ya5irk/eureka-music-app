@@ -7,15 +7,15 @@ C4Container
     Person(user, "Listener")
 
     Container_Boundary(clientBoundary, "Desktop Client (Ubuntu, venv)") {
-        Container(ui, "Qt UI", "PySide2 Widgets", "MainWindow, library/search view, player bar, playlist panel")
-        Container(services, "Client Services", "Python", "ApiClient, DownloadManager, PlayerController, PlaylistService — run on QThreadPool workers")
-        ContainerDb(clientdb, "Local Store", "SQLite (WAL)", "local_track, playlist, playlist_track, play_state")
+        Container(ui, "Qt UI", "PySide2 Widgets", "Browse/Library/Playlist/Stats tabs, player bar with visualizer")
+        Container(services, "Client Services", "Python", "ApiClient, DownloadManager, UploadManager, PlayerController, PlaylistService — run on QThreadPool workers")
+        ContainerDb(clientdb, "Local Store", "SQLite (WAL)", "local_track, playlist, playlist_track, play_state, play_event")
         Container(files, "Downloaded Audio", "Filesystem", "Local copies of downloaded tracks")
     }
 
     Container_Boundary(serverBoundary, "Server (Docker Compose)") {
-        Container(api, "API", "FastAPI", "REST endpoints: /tracks, /tracks/{id}/audio, /genres, /health")
-        ContainerDb(db, "Catalog DB", "Postgres", "track, genre, track_genre")
+        Container(api, "API", "FastAPI", "REST endpoints: /tracks, /tracks/{id}/audio, /tracks/{id}/similar, /tracks/{id}/recommend-next, /genres, /health")
+        ContainerDb(db, "Catalog DB", "Postgres", "track, genre, track_genre, track_feature")
         Container(storage, "Audio Storage", "Filesystem volume", "Canonical audio files")
     }
 
