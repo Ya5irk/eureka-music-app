@@ -34,6 +34,19 @@ how AI was used, not just the output.
    from what a diagram showed, the diagram (and `DESIGN.md`) was updated in
    the same commit — diagrams are meant to describe the system as built, not
    just as originally imagined.
+7. **Live debugging over guessing (human-directed)**: real bugs that only
+   surfaced when actually running the system - not from reading the code -
+   were root-caused with throwaway diagnostic scripts/timing tests rather
+   than speculative fixes. Examples: the crash-resume position bug (this
+   Qt Multimedia backend never reports a valid `duration()` and `pause()`
+   alone never advances playback - discovered by logging state transitions
+   live on the target Ubuntu machine, not from documentation), and a
+   Postgres foreign-key ordering bug plus a seed-time performance problem
+   found while seeding the full 8,000-track catalog (the SQLite backend
+   the test suite runs against doesn't enforce foreign keys, so it never
+   caught the first one; an isolated per-file timing test, not a guess,
+   is what found the second one). Each is logged in its own commit message
+   with what was observed and how it was diagnosed.
 
 ## What AI was *not* used for
 

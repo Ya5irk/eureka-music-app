@@ -33,9 +33,15 @@ minimum feature set, with passing test suites — see the commit history for
 how the work was decomposed. Verified end-to-end on a real Ubuntu 22.04
 machine: live `docker compose` stack, full 8,000-track FMA Small seed,
 client GUI exercised against it (browse/search, download, playback incl.
-crash-safe resume, playlists, upload). The bonus features in `DESIGN.md`
-§7 (visualizer, similar-tracks, recommend-next) were not attempted — the
-required scope took priority over the 5-day window.
+crash-safe resume, playlists, upload).
+
+All five bonus features in `DESIGN.md` §7 are implemented and covered by
+unit/integration tests: the audio-content similarity engine + recommend-next
+(server), the real-time audio visualizer, the listening-stats dashboard, and
+M3U playlist export/import (client). The similarity engine needs the full
+catalog re-seeded with audio-feature vectors (a heavier, slower seed pass
+than the metadata-only one above) to be meaningfully demonstrated at full
+scale; that re-seed is what's currently running.
 
 ## Data
 

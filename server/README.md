@@ -49,12 +49,32 @@ catalogued, so an interrupted run (this is a large dataset) can resume.
 `--dry-run` parses and prints rows without writing anything — useful to
 sanity-check `tracks.csv` parsing against your actual download first.
 
+Seeding also extracts a small audio-content feature vector per track (see
+`app/audio_features.py` and DESIGN.md §7) for the similarity/recommend-next
+bonus features below — this is the slow part of a full run, not the file
+copy/checksum step. On modest hardware (e.g. a 2-vCPU VM), budget real time
+for a full 8,000-track run; it's still safely resumable if interrupted.
+
 ## Verify
 
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/tracks | jq
 ```
+
+### Bonus features (DESIGN.md §7)
+
+```bash
+# audio-content similarity ranking for a given track id
+curl http://localhost:8000/tracks/<id>/similar | jq
+
+# nearest unplayed track, excluding ids you pass in
+curl "http://localhost:8000/tracks/<id>/recommend-next?exclude=<id1>,<id2>" | jq
+```
+
+Both return 404 if the track has no feature vector yet (seeded/uploaded
+before extraction ran, or its clip failed to decode) - not an error, just
+nothing to rank against.
 
 ## Tests
 
@@ -89,15 +109,16 @@ server/
     main.py           # FastAPI app + lifespan (creates tables on startup)
     config.py          # env-driven settings
     database.py         # async SQLAlchemy engine/session
-    models.py            # Track, Genre, track_genre (+ trigram indexes)
+    models.py            # Track, Genre, track_genre, TrackFeature (+ trigram indexes)
     schemas.py            # Pydantic response models
     pagination.py          # cursor encode/decode
     storage.py              # checksum + atomic-rename upload streaming, duration probing
+    audio_features.py        # MFCC extraction + cosine similarity (bonus: similar/recommend-next)
     routers/
-      tracks.py              # list/search, get, download (Range support), upload
+      tracks.py              # list/search, get, download (Range support), upload, similar, recommend-next
       genres.py
       health.py
-  scripts/seed.py     # seeds the catalog from an unzipped FMA folder
+  scripts/seed.py     # seeds the catalog + audio features from an unzipped FMA folder
   init-db/01-extensions.sql  # enables pg_trgm on first Postgres init
   tests/
   Dockerfile

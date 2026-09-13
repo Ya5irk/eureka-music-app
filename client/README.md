@@ -70,14 +70,19 @@ Idempotent: re-running skips tracks already present by checksum.
 pytest
 ```
 
-19+ tests cover the DAOs (SQLite persistence, playlist ordering, play-state
-round-trips), `PlaylistService` (shuffle never mutates manual order —
-`DESIGN.md` §4.2), `ApiClient` (against `httpx.MockTransport`, no live
-server needed), `DownloadManager` (via `pytest-qt`'s `qtbot`, including the
-checksum-dedupe path that skips the network entirely), `PlayerController`
-(queue navigation, loop modes, shuffle, crash-safe resume), and the seed
-script's CSV parsing. Tests run headless via `QT_QPA_PLATFORM=offscreen`,
-set automatically in `tests/conftest.py`.
+47+ tests cover the DAOs (SQLite persistence, playlist ordering, play-state
+round-trips, listening-stats aggregation), `PlaylistService` (shuffle never
+mutates manual order — `DESIGN.md` §4.2 — plus M3U export/import matching
+against the local library), `ApiClient` (against `httpx.MockTransport`, no
+live server needed, including the similar-tracks/recommend-next calls),
+`DownloadManager` (via `pytest-qt`'s `qtbot`, including the checksum-dedupe
+path that skips the network entirely), `PlayerController` (queue
+navigation, loop modes, shuffle, crash-safe resume, and that a play-event is
+logged on real playback but not during crash-resume restoration), the pure
+FFT/banding logic behind the visualizer (`app/audio_levels.py`, no live
+audio pipeline needed), and the seed script's CSV parsing. Tests run
+headless via `QT_QPA_PLATFORM=offscreen`, set automatically in
+`tests/conftest.py`.
 
 ## Lint / types
 
@@ -105,14 +110,32 @@ the full dataset first, then:
   views page in ~100–200 rows at a time (`canFetchMore`/`fetchMore` in
   `app/ui/models.py`) rather than materializing the whole catalog.
 
+## Bonus features (DESIGN.md §7)
+
+- **Similar Tracks / Recommend Next**: "Similar Tracks…" button in Browse,
+  "Recommend Next" in the player bar — both call the server's similarity
+  endpoints (needs the server seeded with audio-feature vectors).
+- **Visualizer**: real-time FFT bars in the player bar, driven by actual
+  playback buffers (`app/audio_levels.py` + `app/services/player_controller.py`'s
+  `QAudioProbe`). Shows an honest "unavailable on this audio backend"
+  message instead of a frozen display if the backend never delivers a
+  buffer within a few seconds of playback starting.
+- **Listening stats**: a "Stats" tab — total plays/listening time, top
+  artists/genres, recently played, from a local `play_event` log.
+- **Playlist export/import**: "Export…"/"Import…" buttons in the Playlists
+  tab, standard `.m3u` files. Import only pulls in entries that match a
+  track already in your local library (by path or filename) - it never
+  fetches anything new.
+
 ## Layout
 
 ```
 client/
   app/
     api_client.py         # sync HTTP client (used from worker threads only)
+    audio_levels.py        # pure FFT/banding logic for the visualizer (no Qt dependency)
     config.py              # env-driven settings
-    dao.py                 # LocalLibraryDao, PlaylistDao, PlayStateDao (sqlite3, WAL)
+    dao.py                 # LocalLibraryDao, PlaylistDao, PlayStateDao, StatsDao (sqlite3, WAL)
     database.py             # schema + connection helper
     local_models.py         # LocalTrack, Playlist, PlayState, LoopMode
     main.py                 # entry point
@@ -120,11 +143,14 @@ client/
     services/
       download_manager.py    # async download + checksum-dedupe + library insert
       upload_manager.py      # async upload
-      playlist_service.py    # playlist CRUD + non-destructive shuffle view
-      player_controller.py   # QMediaPlayer wrapper: queue, loop, shuffle, crash-safe state
+      playlist_service.py    # playlist CRUD + non-destructive shuffle view + M3U export/import
+      player_controller.py   # QMediaPlayer wrapper: queue, loop, shuffle, crash-safe state,
+                              # audio-probe -> visualizer levels, play-event logging
     ui/
-      main_window.py         # assembles Browse / Library / Playlist / Player bar
-      models.py               # QAbstractListModel subclasses, lazy fetch-as-you-scroll
+      main_window.py         # assembles Browse / Library / Playlist / Stats / Player bar
+      models.py               # QAbstractTableModel subclasses, lazy fetch-as-you-scroll
+      visualizer_widget.py    # paints the real-time bar visualizer
+      similar_tracks_dialog.py
       upload_dialog.py
   scripts/seed.py           # seeds the local library from an unzipped FMA folder
   tests/
