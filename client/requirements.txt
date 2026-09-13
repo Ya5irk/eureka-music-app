@@ -1,4 +1,11 @@
 PySide2==5.15.2.1
 httpx==0.28.1
 mutagen==1.47.0
-numpy==2.0.2
+# Pinned below 2.0 deliberately: shiboken2's own compiled extension is built
+# against NumPy 1.x's C ABI (confirmed live - `import PySide2` alone, with
+# no numpy import in our own code, already triggers numpy's "compiled using
+# NumPy 1.x... may crash" warning once numpy 2.x is installed in the same
+# venv). Since the visualizer's buffer-conversion path touches both
+# shiboken2 (QAudioBuffer's raw pointer) and numpy in the same call, this
+# isn't a cosmetic warning to ignore - numpy 2.x here is a real ABI hazard.
+numpy==1.26.4

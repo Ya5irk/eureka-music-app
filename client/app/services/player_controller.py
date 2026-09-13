@@ -1,6 +1,7 @@
+import ctypes
 import random
 
-from PySide2.QtCore import QObject, QUrl, Signal
+from PySide2.QtCore import QObject, QThreadPool, QUrl, Signal
 from PySide2.QtMultimedia import (
     QAudioBuffer,
     QAudioFormat,
@@ -12,6 +13,7 @@ from PySide2.QtMultimedia import (
 from app.audio_levels import pcm_bytes_to_levels
 from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao, StatsDao
 from app.local_models import LocalTrack, LoopMode, PlayState
+from app.workers import Worker
 
 _POSITION_SAVE_EVERY_N_TICKS = 4  # QMediaPlayer notifies ~4x/sec -> persist ~1x/sec
 
@@ -35,6 +37,7 @@ class PlayerController(QObject):
         self._playlist_dao = playlist_dao
         self._state_dao = state_dao
         self._stats_dao = stats_dao
+        self._pool = QThreadPool.globalInstance()
 
         self._player = QMediaPlayer()
         self._player.setVolume(100)
@@ -190,9 +193,13 @@ class PlayerController(QObject):
                 self._player.pause()
             # Only the genuine "start playing this track now" path (never
             # the crash-resume branch above, which is restoring state, not
-            # a new listen) counts toward the stats dashboard.
+            # a new listen) counts toward the stats dashboard. Off the main
+            # thread: a synchronous SQLite write here would add to the
+            # audible gap on track transitions - this thread is what just
+            # called stop()/setMedia()/play() and is about to emit
+            # trackChanged, so anything blocking it delays audio further.
             if self._stats_dao is not None:
-                self._stats_dao.log_play(track.id)
+                self._pool.start(Worker(self._stats_dao.log_play, track.id))
         self.trackChanged.emit(track)
         self._persist(position_ms=0)
 
@@ -232,10 +239,15 @@ class PlayerController(QObject):
         fmt = buffer.format()
         ptr = buffer.constData()
         try:
-            # PySide2-stubs types constData() as a plain int (it's really a
-            # shiboken2 VoidPtr at runtime, which does have .setsize()).
-            ptr.setsize(buffer.byteCount())  # type: ignore[attr-defined]
-            raw = bytes(ptr)
+            # Confirmed live: this shiboken2.VoidPtr build has neither a
+            # working .setsize() nor a working no-arg .toBytes() (that one
+            # silently returns empty bytes rather than raising, even though
+            # buffer.byteCount() correctly reports the real size - a
+            # genuine binding limitation for this PySide2 build, not an
+            # application bug). Reading the raw memory via ctypes, using
+            # the pointer's own integer address and QAudioBuffer's own
+            # byteCount(), is what actually works.
+            raw = ctypes.string_at(int(ptr), buffer.byteCount())  # type: ignore[arg-type]
         except (AttributeError, TypeError, ValueError):
             return  # unexpected buffer shape on this backend - skip this frame
 
