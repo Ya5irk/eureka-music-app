@@ -638,15 +638,8 @@ class MainWindow(QMainWindow):
         index = self._playlist_view.currentIndex()
         if not index.isValid():
             return
-        playlist_id = self._current_playlist_id()
         new_row = self._playlist_tracks_model.move(index.row(), delta)
         self._playlist_view.setCurrentIndex(self._playlist_tracks_model.index(new_row, 0))
-        if playlist_id is not None:
-            self._player.set_queue(
-                self._playlist_tracks_model.track_ids(),
-                start_index=new_row,
-                playlist_id=playlist_id,
-            )
 
     def _on_toggle_shuffle(self) -> None:
         self._player.toggle_shuffle()
