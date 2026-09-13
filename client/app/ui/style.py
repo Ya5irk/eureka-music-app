@@ -8,8 +8,9 @@ STYLESHEET = """
 QWidget {
     background-color: #121212;
     color: #E8E8E8;
-    font-family: "Ubuntu", "Segoe UI", sans-serif;
+    font-family: "Cantarell", "Noto Sans", "Segoe UI", sans-serif;
     font-size: 10pt;
+    font-weight: bold;
 }
 
 QLabel {
@@ -17,9 +18,10 @@ QLabel {
 }
 
 QLabel#nowPlayingLabel {
-    font-weight: 600;
-    font-size: 11pt;
+    font-weight: bold;
+    font-size: 12pt;
     padding: 2px 0;
+    qproperty-alignment: AlignCenter;
 }
 
 QLabel#emptyStateLabel {

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from PySide2.QtCore import QAbstractTableModel, Qt, QThreadPool, QTimer
+from PySide2.QtGui import QMouseEvent
 from PySide2.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -42,6 +43,25 @@ _VISUALIZER_TIMEOUT_MS = 3000
 def _format_ms(ms: int) -> str:
     total_seconds = max(ms, 0) // 1000
     return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
+
+class SeekSlider(QSlider):
+    """A plain QSlider only jumps to a clicked position if you happen to
+    grab the handle - clicking elsewhere on the track does a page-step
+    instead, which is not how a media seek bar should behave. Jumping the
+    handle to the click point first, then letting the normal press handler
+    run, makes every click (not just ones on the handle) seek immediately
+    while still supporting drag-to-seek.
+    """
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            value = QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(), int(event.x()), self.width()
+            )
+            self.setValue(value)
+            event.accept()
+        super().mousePressEvent(event)
 
 
 def _make_track_table(model: QAbstractTableModel, accessible_name: str) -> QTableView:
@@ -295,6 +315,7 @@ class MainWindow(QMainWindow):
 
         self._now_playing_label = QLabel("Nothing playing")
         self._now_playing_label.setObjectName("nowPlayingLabel")
+        self._now_playing_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._now_playing_label)
 
         self._visualizer = VisualizerWidget()
@@ -302,7 +323,7 @@ class MainWindow(QMainWindow):
 
         seek_row = QHBoxLayout()
         self._position_label = QLabel("0:00")
-        self._position_slider = QSlider(Qt.Horizontal)
+        self._position_slider = SeekSlider(Qt.Horizontal)
         self._position_slider.setRange(0, 0)
         self._position_slider.setAccessibleName("Playback position")
         self._position_slider.setToolTip("Drag to seek to a specific time")
