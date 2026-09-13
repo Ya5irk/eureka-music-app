@@ -46,6 +46,26 @@ def test_next_and_previous_navigate_queue(qtbot, daos: Daos, tmp_path: Path) -> 
     assert daos.state.load().current_track_id == "t1"
 
 
+def test_current_track_reflects_queue_position(qtbot, daos: Daos, tmp_path: Path) -> None:
+    controller = _make_controller(daos, tmp_path)
+    assert controller.current_track() is None  # nothing queued yet
+
+    controller.set_queue(["t0", "t1", "t2"])
+    assert controller.current_track().id == "t0"  # type: ignore[union-attr]
+
+    controller.next()
+    assert controller.current_track().id == "t1"  # type: ignore[union-attr]
+
+
+def test_recently_played_ids_caps_at_limit(qtbot, daos: Daos, tmp_path: Path) -> None:
+    controller = _make_controller(daos, tmp_path)
+    controller.set_queue(["t0", "t1", "t2"])
+    controller.next()  # now at t1
+
+    assert controller.recently_played_ids() == ["t0", "t1"]
+    assert controller.recently_played_ids(limit=1) == ["t1"]
+
+
 def test_playlist_loop_wraps_to_start(qtbot, daos: Daos, tmp_path: Path) -> None:
     controller = _make_controller(daos, tmp_path)
     controller.set_queue(["t0", "t1", "t2"])

@@ -85,3 +85,54 @@ def test_upload_track_sends_multipart(tmp_path: Path) -> None:
     assert seen == {"method": "POST", "path": "/tracks"}
     assert track.id == "new-id"
     assert track.source == "upload"
+
+
+def _track_json(track_id: str, title: str) -> dict:
+    return {
+        "id": track_id,
+        "title": title,
+        "artist": "Someone",
+        "album": None,
+        "duration_seconds": 30,
+        "file_size_bytes": 1,
+        "checksum_sha256": "x",
+        "source": "seed",
+        "genres": [],
+    }
+
+
+def test_get_similar_tracks_parses_results() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/tracks/t1/similar"
+        return httpx.Response(
+            200,
+            json=[{"track": _track_json("t2", "Close"), "similarity": 0.9}],
+        )
+
+    results = _client(handler).get_similar_tracks("t1")
+    assert results[0].track.id == "t2"
+    assert results[0].similarity == 0.9
+
+
+def test_get_similar_tracks_404_returns_empty_list() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "no audio features"})
+
+    assert _client(handler).get_similar_tracks("t1") == []
+
+
+def test_get_recommend_next_sends_exclude_param() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["exclude"] == "a,b"
+        return httpx.Response(200, json={"track": _track_json("t3", "Next"), "similarity": 0.5})
+
+    result = _client(handler).get_recommend_next("t1", exclude=["a", "b"])
+    assert result is not None
+    assert result.track.id == "t3"
+
+
+def test_get_recommend_next_404_returns_none() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "no eligible tracks"})
+
+    assert _client(handler).get_recommend_next("t1") is None

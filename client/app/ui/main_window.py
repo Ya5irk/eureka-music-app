@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide2.QtCore import QAbstractTableModel, Qt
+from PySide2.QtCore import QAbstractTableModel, Qt, QThreadPool
 from PySide2.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -31,7 +31,9 @@ from app.services.player_controller import PlayerController
 from app.services.playlist_service import PlaylistService
 from app.services.upload_manager import UploadManager
 from app.ui.models import LocalLibraryModel, PlaylistTracksModel, RemoteLibraryModel
+from app.ui.similar_tracks_dialog import SimilarTracksDialog
 from app.ui.upload_dialog import UploadDialog
+from app.workers import Worker
 
 
 def _format_ms(ms: int) -> str:
@@ -84,10 +86,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Eureka Music")
 
         self._api = api
+        self._library_dao = library_dao
         self._playlist_service = playlist_service
         self._download_manager = download_manager
         self._upload_manager = upload_manager
         self._player = player
+        self._pool = QThreadPool.globalInstance()
+        self._pending_recommend_track_id: str | None = None
 
         self._remote_model = RemoteLibraryModel(api)
         self._local_model = LocalLibraryModel(library_dao)
@@ -149,8 +154,14 @@ class MainWindow(QMainWindow):
         upload_button = QPushButton("Upload…")
         upload_button.setToolTip("Upload a local audio file to the server's catalog")
         upload_button.clicked.connect(self._on_upload_clicked)
+        similar_button = QPushButton("Similar Tracks…")
+        similar_button.setToolTip(
+            "Find tracks that sound like the selected one, by audio content"
+        )
+        similar_button.clicked.connect(self._on_similar_tracks_clicked)
         actions_row.addWidget(download_button)
         actions_row.addWidget(upload_button)
+        actions_row.addWidget(similar_button)
         layout.addLayout(actions_row)
 
         return widget
@@ -284,8 +295,14 @@ class MainWindow(QMainWindow):
         next_button.setToolTip("Next track")
         next_button.setAccessibleName("Next track")
         next_button.clicked.connect(self._player.next)
+        recommend_button = QPushButton("Recommend Next")
+        recommend_button.setToolTip(
+            "Find and queue a track that sounds like what's currently playing"
+        )
+        recommend_button.clicked.connect(self._on_recommend_next_clicked)
         for button in (prev_button, self._play_pause_button, stop_button, next_button):
             transport_row.addWidget(button)
+        transport_row.addWidget(recommend_button)
         layout.addLayout(transport_row)
 
         return bar
@@ -329,6 +346,9 @@ class MainWindow(QMainWindow):
         self._local_model.prepend_track(track)  # type: ignore[arg-type]
         self._download_progress.hide()
         self.statusBar().showMessage(f"Downloaded {track.title}", 3000)  # type: ignore[attr-defined]
+        if track.id == self._pending_recommend_track_id:  # type: ignore[attr-defined]
+            self._pending_recommend_track_id = None
+            self._player.set_queue([track.id], playlist_id=None)  # type: ignore[attr-defined]
 
     def _on_download_failed(self, track_id: str, error: str) -> None:
         self._download_progress.hide()
@@ -354,6 +374,32 @@ class MainWindow(QMainWindow):
 
     def _on_upload_failed(self, error: str) -> None:
         QMessageBox.warning(self, "Upload failed", error)
+
+    def _on_similar_tracks_clicked(self) -> None:
+        index = self._remote_view.currentIndex()
+        if not index.isValid():
+            return
+        track = self._remote_model.track_at(index.row())
+        self.statusBar().showMessage(f"Finding tracks similar to {track.title}…")
+        worker = Worker(self._api.get_similar_tracks, track.id)
+        worker.signals.result.connect(
+            lambda results: self._on_similar_tracks_result(track.title, results)
+        )
+        worker.signals.error.connect(
+            lambda err: self.statusBar().showMessage(f"Similarity search failed: {err}", 5000)
+        )
+        self._pool.start(worker)
+
+    def _on_similar_tracks_result(self, source_title: str, results: object) -> None:
+        self.statusBar().clearMessage()
+        dialog = SimilarTracksDialog(source_title, results, self)  # type: ignore[arg-type]
+        if dialog.exec_() == SimilarTracksDialog.Accepted:
+            track = dialog.selected_track()
+            if track is not None:
+                self.statusBar().showMessage(f"Downloading {track.title}…")
+                self._download_progress.setValue(0)
+                self._download_progress.show()
+                self._download_manager.download(track)
 
     # -- library / playlists -----------------------------------------------
 
@@ -469,3 +515,32 @@ class MainWindow(QMainWindow):
     def _on_seek_released(self) -> None:
         self._seeking = False
         self._player.seek(self._position_slider.value())
+
+    def _on_recommend_next_clicked(self) -> None:
+        current = self._player.current_track()
+        if current is None:
+            self.statusBar().showMessage("Nothing is playing to base a recommendation on", 4000)
+            return
+        exclude = self._player.recently_played_ids()
+        self.statusBar().showMessage("Finding a recommended track…")
+        worker = Worker(self._api.get_recommend_next, current.id, exclude)
+        worker.signals.result.connect(self._on_recommend_next_result)
+        worker.signals.error.connect(
+            lambda err: self.statusBar().showMessage(f"Recommendation failed: {err}", 5000)
+        )
+        self._pool.start(worker)
+
+    def _on_recommend_next_result(self, result: object) -> None:
+        if result is None:
+            self.statusBar().showMessage("No recommendation available yet for this track", 4000)
+            return
+        track = result.track  # type: ignore[attr-defined]
+        if self._library_dao.get(track.id) is not None:
+            self.statusBar().showMessage(f"Playing recommended track: {track.title}", 4000)
+            self._player.set_queue([track.id], playlist_id=None)
+            return
+        self.statusBar().showMessage(f"Downloading recommended track: {track.title}…")
+        self._pending_recommend_track_id = track.id
+        self._download_progress.setValue(0)
+        self._download_progress.show()
+        self._download_manager.download(track)

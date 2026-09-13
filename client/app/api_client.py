@@ -44,6 +44,20 @@ class RemoteTrackPage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True)
+class SimilarTrack:
+    """A track ranked by audio-content similarity to some other track - see
+    the server's /tracks/{id}/similar and /tracks/{id}/recommend-next.
+    """
+
+    track: RemoteTrack
+    similarity: float
+
+    @classmethod
+    def from_json(cls, data: dict) -> "SimilarTrack":
+        return cls(track=RemoteTrack.from_json(data["track"]), similarity=data["similarity"])
+
+
 ProgressCallback = Callable[[int, int], None]  # (bytes_done, bytes_total)
 
 
@@ -94,6 +108,32 @@ class ApiClient:
             resp = client.get(f"{self._base_url}/genres")
             resp.raise_for_status()
             return [g["name"] for g in resp.json()]
+
+    def get_similar_tracks(self, track_id: str, limit: int = 10) -> list[SimilarTrack]:
+        with self._client() as client:
+            resp = client.get(
+                f"{self._base_url}/tracks/{track_id}/similar", params={"limit": limit}
+            )
+            if resp.status_code == 404:
+                # No feature vector for this track yet (e.g. seeded/uploaded
+                # before the similarity engine existed, or extraction failed
+                # on a corrupt clip) - an empty result, not an error.
+                return []
+            resp.raise_for_status()
+            return [SimilarTrack.from_json(item) for item in resp.json()]
+
+    def get_recommend_next(
+        self, track_id: str, exclude: list[str] | None = None
+    ) -> SimilarTrack | None:
+        params = {"exclude": ",".join(exclude)} if exclude else {}
+        with self._client() as client:
+            resp = client.get(
+                f"{self._base_url}/tracks/{track_id}/recommend-next", params=params
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return SimilarTrack.from_json(resp.json())
 
     def download_track(
         self, track_id: str, dest_path: Path, on_progress: ProgressCallback | None = None

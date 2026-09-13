@@ -171,10 +171,17 @@ class PlayerController(QObject):
         self.trackChanged.emit(track)
         self._persist(position_ms=0)
 
-    def _current_track(self) -> LocalTrack | None:
+    def current_track(self) -> LocalTrack | None:
         if not self._queue:
             return None
         return self._library.get(self._queue[self._index])
+
+    def recently_played_ids(self, limit: int = 20) -> list[str]:
+        """The queue's last `limit` played track ids up to and including the
+        current one, in play order - used to avoid re-recommending a track
+        just played (see MainWindow's "Recommend Next" action).
+        """
+        return self._queue[max(0, self._index - limit + 1) : self._index + 1]
 
     def _on_position_changed(self, position_ms: int) -> None:
         if self._pending_seek_ms is not None:
