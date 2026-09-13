@@ -82,6 +82,16 @@ class TrackFeature(Base):
     )
     vector: Mapped[list[float]] = mapped_column(JSON, nullable=False)
 
+    # No code actually navigates this relationship (similar/recommend-next
+    # query TrackFeature directly) - it exists so SQLAlchemy's unit-of-work
+    # knows TrackFeature depends on Track and orders INSERTs accordingly.
+    # Without it, batching many new Track+TrackFeature rows into one flush
+    # risked emitting a TrackFeature insert before its Track (a real,
+    # live-tested ForeignKeyViolationError against Postgres - the SQLite
+    # backend the test suite runs against doesn't enforce FKs, so it never
+    # caught this), which is what forced seed.py to flush every single row.
+    track: Mapped["Track"] = relationship("Track")
+
 
 Index("ix_track_created_id", Track.created_at.desc(), Track.id.desc())
 Index(

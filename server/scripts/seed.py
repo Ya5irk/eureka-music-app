@@ -211,6 +211,15 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
     genre_cache: dict[str, Genre] = {}
 
     async with SessionLocal() as db:
+        # One upfront query instead of one per row: a per-track `SELECT ...
+        # WHERE checksum_sha256 = ?` round-trip was cheap in isolation but,
+        # multiplied by 8,000 tracks against a DB across a virtualized
+        # network, was a real, measured chunk of total seed time - an
+        # in-memory set lookup is effectively free by comparison.
+        existing_checksums: set[str] = set(
+            (await db.scalars(select(Track.checksum_sha256))).all()
+        )
+
         for row in rows:
             audio_path = _fma_audio_path(fma_root, row.track_id)
             if not audio_path.is_file():
@@ -218,10 +227,10 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
                 continue
 
             checksum = _sha256_file(audio_path)
-            existing = await db.scalar(select(Track).where(Track.checksum_sha256 == checksum))
-            if existing is not None:
+            if checksum in existing_checksums:
                 skipped_duplicate += 1
                 continue
+            existing_checksums.add(checksum)
 
             dest = settings.storage_dir / f"{checksum}.mp3"
             if not dest.exists():
