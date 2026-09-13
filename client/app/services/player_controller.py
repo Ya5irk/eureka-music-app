@@ -1,8 +1,15 @@
 import random
 
 from PySide2.QtCore import QObject, QUrl, Signal
-from PySide2.QtMultimedia import QMediaContent, QMediaPlayer
+from PySide2.QtMultimedia import (
+    QAudioBuffer,
+    QAudioFormat,
+    QAudioProbe,
+    QMediaContent,
+    QMediaPlayer,
+)
 
+from app.audio_levels import pcm_bytes_to_levels
 from app.dao import LocalLibraryDao, PlaylistDao, PlayStateDao
 from app.local_models import LocalTrack, LoopMode, PlayState
 
@@ -14,6 +21,7 @@ class PlayerController(QObject):
     positionChanged = Signal(int)  # ms
     durationChanged = Signal(int)  # ms
     queueChanged = Signal(list)  # list[str] track ids, current playback order
+    audioLevelsChanged = Signal(list)  # list[float] in [0, 1] - see app/audio_levels.py
 
     def __init__(
         self,
@@ -32,6 +40,16 @@ class PlayerController(QObject):
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._player.durationChanged.connect(self.durationChanged.emit)
+
+        # Visualizer data source ("music visualizer" bonus feature). Whether
+        # this backend actually delivers probed buffers is a real open
+        # question (this project has already hit GStreamer-backend quirks
+        # elsewhere - duration()/pause() - that no amount of doc-reading
+        # predicted); MainWindow times out and shows a fallback message if
+        # audioLevelsChanged never fires after playback starts.
+        self._probe = QAudioProbe()
+        self._probe.audioBufferProbed.connect(self._on_audio_buffer)
+        self._probe.setSource(self._player)
 
         self._queue: list[str] = []
         self._index: int = 0
@@ -200,6 +218,28 @@ class PlayerController(QObject):
         self._tick_count += 1
         if self._tick_count % _POSITION_SAVE_EVERY_N_TICKS == 0:
             self._persist(position_ms)
+
+    def _on_audio_buffer(self, buffer: QAudioBuffer) -> None:
+        if not buffer.isValid():
+            return
+        fmt = buffer.format()
+        ptr = buffer.constData()
+        try:
+            # PySide2-stubs types constData() as a plain int (it's really a
+            # shiboken2 VoidPtr at runtime, which does have .setsize()).
+            ptr.setsize(buffer.byteCount())  # type: ignore[attr-defined]
+            raw = bytes(ptr)
+        except (AttributeError, TypeError, ValueError):
+            return  # unexpected buffer shape on this backend - skip this frame
+
+        levels = pcm_bytes_to_levels(
+            raw,
+            sample_size_bits=fmt.sampleSize(),
+            channel_count=fmt.channelCount(),
+            is_float=fmt.sampleType() == QAudioFormat.Float,
+            is_signed=fmt.sampleType() == QAudioFormat.SignedInt,
+        )
+        self.audioLevelsChanged.emit(levels)
 
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
         if status != QMediaPlayer.EndOfMedia:

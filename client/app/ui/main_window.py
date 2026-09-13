@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide2.QtCore import QAbstractTableModel, Qt, QThreadPool
+from PySide2.QtCore import QAbstractTableModel, Qt, QThreadPool, QTimer
 from PySide2.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -33,7 +33,10 @@ from app.services.upload_manager import UploadManager
 from app.ui.models import LocalLibraryModel, PlaylistTracksModel, RemoteLibraryModel
 from app.ui.similar_tracks_dialog import SimilarTracksDialog
 from app.ui.upload_dialog import UploadDialog
+from app.ui.visualizer_widget import VisualizerWidget
 from app.workers import Worker
+
+_VISUALIZER_TIMEOUT_MS = 3000
 
 
 def _format_ms(ms: int) -> str:
@@ -93,6 +96,9 @@ class MainWindow(QMainWindow):
         self._player = player
         self._pool = QThreadPool.globalInstance()
         self._pending_recommend_track_id: str | None = None
+        self._visualizer_timer = QTimer(self)
+        self._visualizer_timer.setSingleShot(True)
+        self._visualizer_timer.timeout.connect(self._on_visualizer_timeout)
 
         self._remote_model = RemoteLibraryModel(api)
         self._local_model = LocalLibraryModel(library_dao)
@@ -254,6 +260,9 @@ class MainWindow(QMainWindow):
         self._now_playing_label.setObjectName("nowPlayingLabel")
         layout.addWidget(self._now_playing_label)
 
+        self._visualizer = VisualizerWidget()
+        layout.addWidget(self._visualizer)
+
         seek_row = QHBoxLayout()
         self._position_label = QLabel("0:00")
         self._position_slider = QSlider(Qt.Horizontal)
@@ -320,6 +329,7 @@ class MainWindow(QMainWindow):
         self._player.trackChanged.connect(self._on_track_changed)
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_duration_changed)
+        self._player.audioLevelsChanged.connect(self._on_audio_levels)
 
         self._seeking = False
 
@@ -499,6 +509,15 @@ class MainWindow(QMainWindow):
     def _on_track_changed(self, track: object) -> None:
         self._now_playing_label.setText(f"{track.title} — {track.artist}")  # type: ignore[attr-defined]
         self._play_pause_button.setIcon(self._pause_icon)
+        self._visualizer.reset()
+        self._visualizer_timer.start(_VISUALIZER_TIMEOUT_MS)
+
+    def _on_audio_levels(self, levels: object) -> None:
+        self._visualizer_timer.stop()
+        self._visualizer.set_levels(levels)  # type: ignore[arg-type]
+
+    def _on_visualizer_timeout(self) -> None:
+        self._visualizer.set_unavailable("Visualizer unavailable on this audio backend")
 
     def _on_position_changed(self, ms: int) -> None:
         if not self._seeking:
