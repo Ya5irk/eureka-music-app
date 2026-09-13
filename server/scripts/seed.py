@@ -23,6 +23,13 @@ minimum: track/genres_all (all genre tags, not only genre_top) resolved to
 names via genres.csv, track/tags, track/license, and album/date_released
 (-> release year). All confirmed against the real downloaded dataset, not
 guessed from the FMA repo's docs alone.
+
+Also extracts a small audio-content feature vector per track (see
+app/audio_features.py) for the "similar tracks"/"recommend next" bonus
+features - this is the slow part of a full seed run (decoding + MFCC per
+30s clip), not the file copy/checksum. A single track whose extraction
+fails (corrupt/unreadable clip) is logged and skipped without aborting the
+rest of the run; that track just won't show up in similarity results.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import csv
 import hashlib
 import shutil
 import sys
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,9 +49,10 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audio_features import extract_feature_vector
 from app.config import get_settings
 from app.database import SessionLocal, init_db
-from app.models import Genre, Track
+from app.models import Genre, Track, TrackFeature
 from app.storage import probe_duration_seconds
 
 _CHUNK_SIZE = 1024 * 1024
@@ -198,7 +207,7 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
 
     await init_db()
 
-    inserted = skipped_missing = skipped_duplicate = 0
+    inserted = skipped_missing = skipped_duplicate = skipped_feature_extraction = 0
     genre_cache: dict[str, Genre] = {}
 
     async with SessionLocal() as db:
@@ -224,7 +233,9 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
                 names = [row.genre_top]  # fall back to the single top genre
             genres = await _get_or_create_genres(db, names, genre_cache)
 
+            track_id = str(uuid.uuid4())
             track = Track(
+                id=track_id,
                 title=row.title,
                 artist=row.artist,
                 album=row.album or None,
@@ -239,6 +250,14 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
                 genres=genres,
             )
             db.add(track)
+
+            try:
+                vector = extract_feature_vector(dest)
+                db.add(TrackFeature(track_id=track_id, vector=vector))
+            except Exception as exc:  # noqa: BLE001 - a bad clip shouldn't abort the whole seed
+                skipped_feature_extraction += 1
+                print(f"...warning: feature extraction failed for track {row.track_id}: {exc}")
+
             inserted += 1
 
             if inserted % 200 == 0:
@@ -249,7 +268,8 @@ async def seed(fma_root: Path, limit: int | None, dry_run: bool) -> None:
 
     print(
         f"done: inserted={inserted} skipped_duplicate={skipped_duplicate} "
-        f"skipped_missing_audio={skipped_missing}"
+        f"skipped_missing_audio={skipped_missing} "
+        f"skipped_feature_extraction={skipped_feature_extraction}"
     )
 
 

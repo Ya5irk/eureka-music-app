@@ -2,16 +2,20 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audio_features import cosine_similarity_matrix, extract_feature_vector
 from app.config import Settings, get_settings
 from app.database import get_db
-from app.models import Genre, Track
+from app.models import Genre, Track, TrackFeature
 from app.pagination import InvalidCursor, decode_cursor, encode_cursor
-from app.schemas import TrackOut, TrackPage
+from app.schemas import SimilarTrackOut, TrackOut, TrackPage
 from app.storage import UploadTooLarge, probe_duration_seconds, stream_upload_to_disk
+
+_GENRE_MATCH_BONUS = 0.05
 
 router = APIRouter(tags=["tracks"])
 
@@ -134,6 +138,96 @@ async def get_track_audio(
     return StreamingResponse(iter_range(), status_code=206, media_type=media_type, headers=headers)
 
 
+@router.get("/tracks/{track_id}/similar", response_model=list[SimilarTrackOut])
+async def get_similar_tracks(
+    track_id: str,
+    limit: int = Query(default=10, gt=0, le=50),
+    db: AsyncSession = Depends(get_db),
+) -> list[SimilarTrackOut]:
+    """"Finding similar songs from a random record" (brief's bonus list):
+    ranks every other track by cosine similarity of its precomputed audio
+    feature vector (see app/audio_features.py) against this one's.
+    """
+    query_feature = await db.get(TrackFeature, track_id)
+    if query_feature is None:
+        raise HTTPException(
+            404, "no audio features for this track (seeded/uploaded before feature extraction?)"
+        )
+
+    result = await db.execute(select(TrackFeature).where(TrackFeature.track_id != track_id))
+    others = result.scalars().all()
+    if not others:
+        return []
+
+    similarities = cosine_similarity_matrix(query_feature.vector, [o.vector for o in others])
+    ranked = sorted(zip(others, similarities, strict=True), key=lambda p: p[1], reverse=True)
+    ranked = ranked[:limit]
+
+    tracks_result = await db.execute(
+        select(Track).where(Track.id.in_([f.track_id for f, _ in ranked]))
+    )
+    tracks_by_id = {t.id: t for t in tracks_result.scalars().unique().all()}
+
+    return [
+        SimilarTrackOut(
+            track=TrackOut.from_orm_track(tracks_by_id[feature.track_id]),
+            similarity=round(sim, 4),
+        )
+        for feature, sim in ranked
+        if feature.track_id in tracks_by_id
+    ]
+
+
+@router.get("/tracks/{track_id}/recommend-next", response_model=SimilarTrackOut)
+async def recommend_next(
+    track_id: str,
+    exclude: str | None = Query(default=None, description="comma-separated track ids to skip"),
+    db: AsyncSession = Depends(get_db),
+) -> SimilarTrackOut:
+    """"Recommend next song" (brief's bonus list): nearest unplayed track to
+    the one currently playing, in the same audio feature space as
+    /similar, with a small bonus for sharing a genre with the source track
+    (per DESIGN.md §7's original plan for this feature).
+    """
+    source_track = await db.get(Track, track_id)
+    query_feature = await db.get(TrackFeature, track_id)
+    if source_track is None or query_feature is None:
+        raise HTTPException(
+            404, "no audio features for this track (seeded/uploaded before feature extraction?)"
+        )
+
+    excluded_ids = {track_id, *(x.strip() for x in (exclude or "").split(",") if x.strip())}
+    result = await db.execute(
+        select(TrackFeature).where(TrackFeature.track_id.notin_(excluded_ids))
+    )
+    others = result.scalars().all()
+    if not others:
+        raise HTTPException(404, "no eligible tracks left to recommend")
+
+    similarities = cosine_similarity_matrix(query_feature.vector, [o.vector for o in others])
+    tracks_result = await db.execute(
+        select(Track).where(Track.id.in_([f.track_id for f in others]))
+    )
+    tracks_by_id = {t.id: t for t in tracks_result.scalars().unique().all()}
+    source_genres = {g.name for g in source_track.genres}
+
+    scored: list[tuple[Track, float]] = []
+    for feature, sim in zip(others, similarities, strict=True):
+        track = tracks_by_id.get(feature.track_id)
+        if track is None:
+            continue
+        bonus = _GENRE_MATCH_BONUS if source_genres & {g.name for g in track.genres} else 0.0
+        scored.append((track, sim + bonus))
+
+    if not scored:
+        raise HTTPException(404, "no eligible tracks left to recommend")
+
+    best_track, best_score = max(scored, key=lambda p: p[1])
+    return SimilarTrackOut(
+        track=TrackOut.from_orm_track(best_track), similarity=round(best_score, 4)
+    )
+
+
 async def _get_or_create_genres(db: AsyncSession, names: list[str]) -> list[Genre]:
     if not names:
         return []
@@ -189,6 +283,16 @@ async def upload_track(
         genres=genre_objs,
     )
     db.add(track)
+    await db.flush()  # assigns track.id, needed for the TrackFeature FK below
+
+    try:
+        # MFCC extraction is CPU-bound; run off the event loop so one upload
+        # doesn't stall every other request being served concurrently.
+        vector = await run_in_threadpool(extract_feature_vector, path)
+        db.add(TrackFeature(track_id=track.id, vector=vector))
+    except Exception:  # noqa: BLE001 - an uploaded file we can't analyze still gets stored
+        pass
+
     await db.commit()
     await db.refresh(track, attribute_names=["genres"])
     return TrackOut.from_orm_track(track)

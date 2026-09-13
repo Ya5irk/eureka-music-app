@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Column,
     DateTime,
@@ -64,6 +65,22 @@ class Genre(Base):
     tracks: Mapped[list["Track"]] = relationship(
         "Track", secondary=track_genre, back_populates="genres"
     )
+
+
+class TrackFeature(Base):
+    """One row per track: a precomputed audio-content feature vector, used
+    by the "similar tracks" / "recommend next" bonus features (see
+    app/audio_features.py and app/routers/tracks.py). `JSON` (not a
+    Postgres-only ARRAY) so the same model works against the SQLite DB the
+    test suite runs against - see tests/conftest.py.
+    """
+
+    __tablename__ = "track_feature"
+
+    track_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("track.id", ondelete="CASCADE"), primary_key=True
+    )
+    vector: Mapped[list[float]] = mapped_column(JSON, nullable=False)
 
 
 Index("ix_track_created_id", Track.created_at.desc(), Track.id.desc())

@@ -38,7 +38,7 @@ async def _clean_db() -> None:
     # next — e.g. an empty-catalog assertion failing because an earlier
     # test already uploaded tracks.
     async with engine.begin() as conn:
-        for table in ("track_genre", "track", "genre"):
+        for table in ("track_genre", "track_feature", "track", "genre"):
             await conn.execute(text(f"DELETE FROM {table}"))
 
 
@@ -54,3 +54,21 @@ def mp3_bytes(tag: bytes = b"\xff\xfb\x90\x00") -> bytes:
     handled gracefully) but enough for upload/storage/checksum round-trips.
     """
     return tag + os.urandom(256)
+
+
+def wav_bytes(frequency_hz: float = 440.0, seconds: float = 1.0, sample_rate: int = 22050) -> bytes:
+    """A genuinely decodable WAV (a sine tone) - unlike mp3_bytes() above,
+    this is real audio, needed to exercise app.audio_features.extract_
+    feature_vector and the /similar, /recommend-next endpoints, which need
+    an actual waveform to compute MFCCs from.
+    """
+    import io
+
+    import numpy as np
+    import soundfile as sf
+
+    t = np.linspace(0, seconds, int(sample_rate * seconds), endpoint=False)
+    tone = 0.5 * np.sin(2 * np.pi * frequency_hz * t)
+    buf = io.BytesIO()
+    sf.write(buf, tone, sample_rate, format="WAV")
+    return buf.getvalue()

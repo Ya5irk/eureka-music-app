@@ -57,3 +57,8 @@ class GenreOut(BaseModel):
 
     id: int
     name: str
+
+
+class SimilarTrackOut(BaseModel):
+    track: TrackOut
+    similarity: float
