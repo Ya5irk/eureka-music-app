@@ -374,7 +374,16 @@ cosmetic (the brief explicitly deprioritizes visual polish).
    (duration()/pause() during crash-resume), the client starts a timeout on
    every track change and shows an honest "unavailable on this backend"
    message rather than a visualizer that just silently looks frozen, if no
-   buffer ever arrives.
+   buffer ever arrives. A second, unrelated surprise turned up live-testing
+   this on the actual Ubuntu VM: `QAudioBuffer`'s raw pointer
+   (`constData()`) has neither a working `.setsize()` nor a working no-arg
+   `.toBytes()` in this PySide2 build - the latter silently returns empty
+   bytes rather than raising, even though `byteCount()` correctly reports
+   the real size. Reading the memory directly via
+   `ctypes.string_at(int(ptr), buffer.byteCount())` is what actually works
+   (see `PlayerController._on_audio_buffer`) - found via temporary
+   diagnostic logging, not guesswork, the same discipline as the
+   crash-resume bug.
 2. **Find similar tracks** (`server/app/audio_features.py`): a real
    audio-content signal, not a metadata heuristic — at seed/upload time,
    extract a 40-dim feature vector per track (mean+std of 20 MFCCs via
