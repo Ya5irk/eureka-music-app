@@ -101,6 +101,49 @@ QHeaderView::section:last {
     border-right: none;
 }
 
+QListWidget {
+    background-color: #181818;
+    border: 1px solid #2A2A2A;
+    border-radius: 4px;
+    outline: none;
+}
+QListWidget::item {
+    padding: 6px 8px;
+    border-bottom: 1px solid #202020;
+}
+QListWidget::item:selected {
+    background-color: #1B4B45;
+    color: #2DD4BF;
+}
+QListWidget::item:hover:!selected {
+    background-color: #232323;
+}
+
+QFrame#statCard {
+    background-color: #181818;
+    border: 1px solid #2A2A2A;
+    border-left: 3px solid #2DD4BF;
+    border-radius: 6px;
+    padding: 10px 16px;
+}
+QLabel#statCardTitle {
+    color: #A0A0A0;
+    font-size: 9pt;
+    font-weight: normal;
+    text-transform: uppercase;
+}
+QLabel#statCardValue {
+    color: #2DD4BF;
+    font-size: 22pt;
+    font-weight: bold;
+}
+QLabel#statSectionHeader {
+    color: #E8E8E8;
+    font-size: 11pt;
+    font-weight: bold;
+    padding: 6px 0 2px 0;
+}
+
 QTabWidget::pane {
     border: 1px solid #2A2A2A;
     border-radius: 4px;

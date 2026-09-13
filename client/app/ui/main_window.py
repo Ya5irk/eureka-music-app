@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide2.QtCore import QAbstractTableModel, Qt, QThreadPool, QTimer
@@ -6,11 +7,13 @@ from PySide2.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -62,6 +65,42 @@ class SeekSlider(QSlider):
             self.setValue(value)
             event.accept()
         super().mousePressEvent(event)
+
+
+@dataclass
+class _StatsSnapshot:
+    total_plays: int
+    total_seconds: int
+    top_artists: list[tuple[str, int]]
+    top_genres: list[tuple[str, int]]
+    recent: list[tuple[str, str, str]]  # title, artist, played_at
+
+
+def _stat_card(title: str, value_label: QLabel) -> QWidget:
+    card = QFrame()
+    card.setObjectName("statCard")
+    card_layout = QVBoxLayout(card)
+    title_label = QLabel(title)
+    title_label.setObjectName("statCardTitle")
+    value_label.setObjectName("statCardValue")
+    card_layout.addWidget(title_label)
+    card_layout.addWidget(value_label)
+    return card
+
+
+def _labeled_list(title: str, list_widget: QListWidget) -> QVBoxLayout:
+    column = QVBoxLayout()
+    header = QLabel(title)
+    header.setObjectName("statSectionHeader")
+    column.addWidget(header)
+    column.addWidget(list_widget)
+    return column
+
+
+def _fill_list(list_widget: QListWidget, rows: list[str]) -> None:
+    list_widget.clear()
+    for row in rows or ["(none yet)"]:
+        list_widget.addItem(row)
 
 
 def _make_track_table(model: QAbstractTableModel, accessible_name: str) -> QTableView:
@@ -297,13 +336,30 @@ class MainWindow(QMainWindow):
         caption.setObjectName("emptyStateLabel")
         layout.addWidget(caption)
 
-        self._stats_label = QLabel("Switch to this tab to load stats…")
-        self._stats_label.setWordWrap(True)
-        self._stats_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self._stats_label.setTextFormat(Qt.RichText)
-        layout.addWidget(self._stats_label, stretch=1)
+        summary_row = QHBoxLayout()
+        self._stats_plays_value = QLabel("0")
+        self._stats_time_value = QLabel("0h 0m")
+        summary_row.addWidget(_stat_card("Total Plays", self._stats_plays_value))
+        summary_row.addWidget(_stat_card("Listening Time", self._stats_time_value))
+        layout.addLayout(summary_row)
+
+        lists_row = QHBoxLayout()
+        self._stats_artists_list = QListWidget()
+        self._stats_artists_list.setAccessibleName("Top artists")
+        self._stats_genres_list = QListWidget()
+        self._stats_genres_list.setAccessibleName("Top genres")
+        lists_row.addLayout(_labeled_list("Top Artists", self._stats_artists_list))
+        lists_row.addLayout(_labeled_list("Top Genres", self._stats_genres_list))
+        layout.addLayout(lists_row, stretch=1)
+
+        self._stats_recent_list = QListWidget()
+        self._stats_recent_list.setAccessibleName("Recently played")
+        layout.addLayout(
+            _labeled_list("Recently Played", self._stats_recent_list), stretch=2
+        )
 
         refresh_button = QPushButton("Refresh")
+        refresh_button.setToolTip("Recompute stats from the latest play history")
         refresh_button.clicked.connect(self._refresh_stats)
         layout.addWidget(refresh_button)
 
@@ -472,9 +528,13 @@ class MainWindow(QMainWindow):
     # -- library / playlists -----------------------------------------------
 
     def _on_local_track_double_clicked(self, index: object) -> None:
+        # Queue the whole (currently loaded) Library listing, not just the
+        # double-clicked track - a single-track queue has nothing for
+        # Next/Previous to skip to, which looked like those buttons were
+        # simply broken.
         row = index.row()  # type: ignore[attr-defined]
-        track = self._local_model.track_at(row)
-        self._player.set_queue([track.id], playlist_id=None)
+        track_ids = [self._local_model.track_at(i).id for i in range(self._local_model.rowCount())]
+        self._player.set_queue(track_ids, start_index=row, playlist_id=None)
 
     def _refresh_playlists(self) -> None:
         current_id = self._current_playlist_id()
@@ -578,8 +638,15 @@ class MainWindow(QMainWindow):
         index = self._playlist_view.currentIndex()
         if not index.isValid():
             return
+        playlist_id = self._current_playlist_id()
         new_row = self._playlist_tracks_model.move(index.row(), delta)
         self._playlist_view.setCurrentIndex(self._playlist_tracks_model.index(new_row, 0))
+        if playlist_id is not None:
+            self._player.set_queue(
+                self._playlist_tracks_model.track_ids(),
+                start_index=new_row,
+                playlist_id=playlist_id,
+            )
 
     def _on_toggle_shuffle(self) -> None:
         self._player.toggle_shuffle()
@@ -622,6 +689,25 @@ class MainWindow(QMainWindow):
         self._visualizer.reset()
         self._visualizer_timer.start(_VISUALIZER_TIMEOUT_MS)
 
+        track_id = track.id  # type: ignore[attr-defined]
+        self._select_track_in_view(self._remote_view, self._remote_model, track_id)
+        self._select_track_in_view(self._local_view, self._local_model, track_id)
+        self._select_track_in_view(self._playlist_view, self._playlist_tracks_model, track_id)
+
+    def _select_track_in_view(self, view: QTableView, model: object, track_id: str) -> None:
+        """Highlights whichever row holds the now-playing track, in every
+        table that happens to have it loaded (Browse's remote listing is
+        paginated, so it may simply not have fetched that row yet - that's
+        fine, it just stays unselected there). Without this, the selection
+        highlight only ever reflected the last row a user clicked, not what
+        was actually playing - confusing once you'd scrolled elsewhere.
+        """
+        for row in range(model.rowCount()):  # type: ignore[attr-defined]
+            if model.track_at(row).id == track_id:  # type: ignore[attr-defined]
+                view.selectRow(row)
+                return
+        view.clearSelection()
+
     def _on_audio_levels(self, levels: object) -> None:
         self._visualizer_timer.stop()
         self._visualizer.set_levels(levels)  # type: ignore[arg-type]
@@ -632,45 +718,41 @@ class MainWindow(QMainWindow):
     # -- stats dashboard -------------------------------------------------
 
     def _refresh_stats(self) -> None:
-        worker = Worker(self._compute_stats_html)
+        worker = Worker(self._compute_stats_snapshot)
         worker.signals.result.connect(self._on_stats_computed)
         self._pool.start(worker)
 
-    def _compute_stats_html(self) -> str:
-        total_plays = self._stats_dao.total_plays()
-        total_seconds = self._stats_dao.total_listening_seconds()
-        hours, remainder = divmod(total_seconds, 3600)
+    def _compute_stats_snapshot(self) -> _StatsSnapshot:
+        return _StatsSnapshot(
+            total_plays=self._stats_dao.total_plays(),
+            total_seconds=self._stats_dao.total_listening_seconds(),
+            top_artists=self._stats_dao.top_artists(),
+            top_genres=self._stats_dao.top_genres(),
+            recent=[
+                (track.title, track.artist, played_at)
+                for track, played_at in self._stats_dao.recent_plays(limit=15)
+            ],
+        )
+
+    def _on_stats_computed(self, snapshot: object) -> None:
+        snap: _StatsSnapshot = snapshot  # type: ignore[assignment]
+        self._stats_plays_value.setText(str(snap.total_plays))
+        hours, remainder = divmod(snap.total_seconds, 3600)
         minutes = remainder // 60
+        self._stats_time_value.setText(f"{hours}h {minutes}m")
 
-        def _section(title: str, rows: list[str]) -> list[str]:
-            return [f"<b>{title}:</b>"] + [f"&nbsp;&nbsp;{row}" for row in (rows or ["(none yet)"])]
-
-        lines = [
-            f"<b>Total plays:</b> {total_plays}",
-            f"<b>Total listening time:</b> {hours}h {minutes}m",
-            "",
-            *_section(
-                "Top artists",
-                [f"{artist} — {count}" for artist, count in self._stats_dao.top_artists()],
-            ),
-            "",
-            *_section(
-                "Top genres",
-                [f"{genre} — {count}" for genre, count in self._stats_dao.top_genres()],
-            ),
-            "",
-            *_section(
-                "Recently played",
-                [
-                    f"{track.title} — {track.artist} ({played_at})"
-                    for track, played_at in self._stats_dao.recent_plays(limit=10)
-                ],
-            ),
-        ]
-        return "<br>".join(lines)
-
-    def _on_stats_computed(self, html: object) -> None:
-        self._stats_label.setText(html)  # type: ignore[arg-type]
+        _fill_list(
+            self._stats_artists_list,
+            [f"{artist}  —  {count}" for artist, count in snap.top_artists],
+        )
+        _fill_list(
+            self._stats_genres_list,
+            [f"{genre}  —  {count}" for genre, count in snap.top_genres],
+        )
+        _fill_list(
+            self._stats_recent_list,
+            [f"{title} — {artist}    ({played_at})" for title, artist, played_at in snap.recent],
+        )
 
     def _on_position_changed(self, ms: int) -> None:
         if not self._seeking:
