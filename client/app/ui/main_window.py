@@ -682,24 +682,15 @@ class MainWindow(QMainWindow):
         self._visualizer.reset()
         self._visualizer_timer.start(_VISUALIZER_TIMEOUT_MS)
 
+        # A "▶ " prefix on the title marks which row is playing, in
+        # whichever tables happen to have it loaded - deliberately not row
+        # *selection*, which is already how a click picks a row for
+        # Download/Add-to-Playlist/etc; reusing it here made a single plain
+        # click look like it had started playback.
         track_id = track.id  # type: ignore[attr-defined]
-        self._select_track_in_view(self._remote_view, self._remote_model, track_id)
-        self._select_track_in_view(self._local_view, self._local_model, track_id)
-        self._select_track_in_view(self._playlist_view, self._playlist_tracks_model, track_id)
-
-    def _select_track_in_view(self, view: QTableView, model: object, track_id: str) -> None:
-        """Highlights whichever row holds the now-playing track, in every
-        table that happens to have it loaded (Browse's remote listing is
-        paginated, so it may simply not have fetched that row yet - that's
-        fine, it just stays unselected there). Without this, the selection
-        highlight only ever reflected the last row a user clicked, not what
-        was actually playing - confusing once you'd scrolled elsewhere.
-        """
-        for row in range(model.rowCount()):  # type: ignore[attr-defined]
-            if model.track_at(row).id == track_id:  # type: ignore[attr-defined]
-                view.selectRow(row)
-                return
-        view.clearSelection()
+        self._remote_model.set_now_playing_id(track_id)
+        self._local_model.set_now_playing_id(track_id)
+        self._playlist_tracks_model.set_now_playing_id(track_id)
 
     def _on_audio_levels(self, levels: object) -> None:
         self._visualizer_timer.stop()

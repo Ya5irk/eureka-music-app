@@ -47,6 +47,25 @@ class _TrackTableModel(QAbstractTableModel):
             return _COLUMNS[section]
         return None
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._now_playing_id: str | None = None
+
+    def set_now_playing_id(self, track_id: str | None) -> None:
+        """Marks which track (if any, in this model) is currently playing,
+        shown as a "▶ " prefix on its title - deliberately *not* done via
+        row selection, which is already how the user picks a row for
+        Download/Add-to-Playlist/etc. Reusing selection for "now playing"
+        made every plain click look like it started playback.
+        """
+        if track_id == self._now_playing_id:
+            return
+        self._now_playing_id = track_id
+        if self.rowCount() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(self.rowCount() - 1, 0)
+            self.dataChanged.emit(top_left, bottom_right, [Qt.DisplayRole])
+
     def _track_at_row(self, row: int) -> RemoteTrack | LocalTrack:
         raise NotImplementedError
 
@@ -61,7 +80,7 @@ class _TrackTableModel(QAbstractTableModel):
         if role == Qt.DisplayRole:
             column = index.column()
             if column == 0:
-                return track.title
+                return f"▶ {track.title}" if track.id == self._now_playing_id else track.title
             if column == 1:
                 return track.artist
             if column == 2:
