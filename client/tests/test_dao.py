@@ -19,6 +19,21 @@ def test_find_by_checksum(library_dao: LocalLibraryDao) -> None:
     assert library_dao.find_by_checksum("does-not-exist") is None
 
 
+def test_find_by_path_or_filename_exact_match(library_dao: LocalLibraryDao) -> None:
+    library_dao.insert_track(make_track("t1", local_path="/downloads/abc123.mp3"))
+    found = library_dao.find_by_path_or_filename("/downloads/abc123.mp3")
+    assert found is not None
+    assert found.id == "t1"
+
+
+def test_find_by_path_or_filename_falls_back_to_basename(library_dao: LocalLibraryDao) -> None:
+    library_dao.insert_track(make_track("t1", local_path="/downloads/abc123.mp3"))
+    found = library_dao.find_by_path_or_filename("/a/totally/different/path/abc123.mp3")
+    assert found is not None
+    assert found.id == "t1"
+    assert library_dao.find_by_path_or_filename("/nowhere/nope.mp3") is None
+
+
 def test_list_page_paginates_and_filters(library_dao: LocalLibraryDao) -> None:
     for i in range(5):
         library_dao.insert_track(make_track(f"t{i}", title=f"Song {i}"))

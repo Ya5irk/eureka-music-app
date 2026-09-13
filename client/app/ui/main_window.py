@@ -208,8 +208,19 @@ class MainWindow(QMainWindow):
         new_button = QPushButton("New…")
         new_button.setToolTip("Create a new playlist")
         new_button.clicked.connect(self._on_new_playlist)
+        export_button = QPushButton("Export…")
+        export_button.setToolTip("Export the selected playlist to a standard .m3u file")
+        export_button.clicked.connect(self._on_export_playlist)
+        import_button = QPushButton("Import…")
+        import_button.setToolTip(
+            "Import an .m3u file as a new playlist (only tracks already in "
+            "your local library are included)"
+        )
+        import_button.clicked.connect(self._on_import_playlist)
         header.addWidget(self._playlist_combo)
         header.addWidget(new_button)
+        header.addWidget(export_button)
+        header.addWidget(import_button)
         layout.addLayout(header)
 
         self._playlist_empty_label = QLabel("No playlists yet — click “New…” to create one.")
@@ -471,6 +482,58 @@ class MainWindow(QMainWindow):
 
     def _on_playlist_selected(self) -> None:
         self._playlist_tracks_model.load(self._current_playlist_id())
+
+    def _on_export_playlist(self) -> None:
+        playlist_id = self._current_playlist_id()
+        if playlist_id is None:
+            return
+        playlist = self._playlist_service.get(playlist_id)
+        default_name = f"{playlist.name}.m3u" if playlist else "playlist.m3u"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Playlist", default_name, "M3U Playlist (*.m3u)"
+        )
+        if not path:
+            return
+        worker = Worker(self._playlist_service.export_m3u, playlist_id, Path(path))
+        worker.signals.result.connect(
+            lambda count: self.statusBar().showMessage(
+                f"Exported {count} track(s) to {path}", 4000
+            )
+        )
+        worker.signals.error.connect(
+            lambda err: self.statusBar().showMessage(f"Export failed: {err}", 5000)
+        )
+        self._pool.start(worker)
+
+    def _on_import_playlist(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Playlist", "", "M3U Playlist (*.m3u)"
+        )
+        if not path:
+            return
+        default_name = Path(path).stem
+        name, ok = QInputDialog.getText(
+            self, "Import Playlist", "New playlist name:", QLineEdit.Normal, default_name
+        )
+        if not ok or not name.strip():
+            return
+        worker = Worker(
+            self._playlist_service.import_m3u, Path(path), name.strip(), self._library_dao
+        )
+        worker.signals.result.connect(self._on_import_completed)
+        worker.signals.error.connect(
+            lambda err: self.statusBar().showMessage(f"Import failed: {err}", 5000)
+        )
+        self._pool.start(worker)
+
+    def _on_import_completed(self, result: object) -> None:
+        self._refresh_playlists()
+        imported = result.imported  # type: ignore[attr-defined]
+        skipped = result.skipped  # type: ignore[attr-defined]
+        message = f"Imported {imported} track(s)"
+        if skipped:
+            message += f", skipped {skipped} not in your local library"
+        self.statusBar().showMessage(message, 5000)
 
     def _on_add_to_playlist(self) -> None:
         playlist_id = self._current_playlist_id()

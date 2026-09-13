@@ -87,6 +87,27 @@ class LocalLibraryDao:
             (n,) = conn.execute("SELECT COUNT(*) FROM local_track").fetchone()
             return int(n)
 
+    def find_by_path_or_filename(self, path: str) -> LocalTrack | None:
+        """Used by M3U playlist import: an exact `local_path` match works
+        when the .m3u was exported from this same install, but the same
+        library re-downloaded on another machine (or after a reinstall)
+        will have a different downloads directory - falling back to a
+        filename match (local_path is always "<checksum>.mp3", so the
+        filename alone is already a strong, checksum-derived match) makes
+        import actually portable rather than only ever working on the
+        exact machine that exported it.
+        """
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM local_track WHERE local_path = ?", (path,)
+            ).fetchone()
+            if row is None:
+                filename = Path(path).name
+                row = conn.execute(
+                    "SELECT * FROM local_track WHERE local_path LIKE ?", (f"%{filename}",)
+                ).fetchone()
+            return _row_to_track(row) if row else None
+
 
 class PlaylistDao:
     def __init__(self, db_path: Path) -> None:
