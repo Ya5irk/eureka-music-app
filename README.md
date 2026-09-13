@@ -35,13 +35,13 @@ machine: live `docker compose` stack, full 8,000-track FMA Small seed,
 client GUI exercised against it (browse/search, download, playback incl.
 crash-safe resume, playlists, upload).
 
-All five bonus features in `DESIGN.md` §7 are implemented and covered by
-unit/integration tests: the audio-content similarity engine + recommend-next
-(server), the real-time audio visualizer, the listening-stats dashboard, and
-M3U playlist export/import (client). The similarity engine needs the full
-catalog re-seeded with audio-feature vectors (a heavier, slower seed pass
-than the metadata-only one above) to be meaningfully demonstrated at full
-scale; that re-seed is what's currently running.
+All five bonus features in `DESIGN.md` §7 are implemented, covered by
+unit/integration tests, and verified live end-to-end on the same Ubuntu
+machine: the audio-content similarity engine + recommend-next (server),
+the real-time audio visualizer, the listening-stats dashboard, and M3U
+playlist export/import (client). The similarity engine's full-catalog
+audio-feature seed (a heavier pass than the metadata-only one above) has
+completed against the full 8,000-track catalog.
 
 ## Data
 
