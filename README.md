@@ -1,7 +1,6 @@
 # Eureka Music App
 
-A music catalog server + Ubuntu desktop client, built for the Eureka
-Robotics full-time software engineer take-home assignment.
+A music catalog server + Ubuntu desktop client.
 
 - **Server**: FastAPI + Postgres, packaged for `docker compose`. Stores the
   song catalog and audio files, and is the single source of truth.
